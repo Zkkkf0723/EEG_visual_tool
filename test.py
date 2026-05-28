@@ -93,6 +93,12 @@ with st.sidebar:
     run_button = st.button("🚀 运行分析", type="primary")
 
 if run_button:
+    # 从session_state恢复edf_file（如果当前为None）
+    if edf_file is None and 'edf_file_uploaded' in st.session_state:
+        edf_file = st.session_state.edf_file_uploaded
+    if prob_file is None and 'prob_file_uploaded' in st.session_state:
+        prob_file = st.session_state.prob_file_uploaded
+    
     if edf_file is None:
         st.info("👆 请先上传EDF文件")
         st.stop()
