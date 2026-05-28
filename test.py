@@ -80,22 +80,22 @@ with st.sidebar:
     
     run_button = st.button("🚀 运行分析", type="primary")
 
-if run_button or ('data_loaded' in st.session_state and edf_file is not None):
-    if not run_button and 'data_loaded' in st.session_state and edf_file is not None:
-        edf_path = st.session_state.edf_path
-        epoch_len_sec = st.session_state.epoch_len_sec
-        nperseg_len = st.session_state.nperseg_len
-        art_threshold = st.session_state.art_threshold
-        selected_leads = st.session_state.selected_leads
-        enable_zscore = st.session_state.get('enable_zscore', True)
-        selected_age_group = st.session_state.get('selected_age_group', '19-44')
-        window_sizes = st.session_state.get('window_sizes', [1, 2, 5, 10, 15])
-        zscore_threshold = st.session_state.get('zscore_threshold', 2.0)
-    
+if run_button:
     if edf_file is None:
         st.info("👆 请先上传EDF文件")
         st.stop()
     
+    # 点击运行按钮时，保存当前参数到session_state
+    st.session_state.epoch_len_sec = epoch_len_sec
+    st.session_state.nperseg_len = nperseg_len
+    st.session_state.art_threshold = art_threshold
+    st.session_state.selected_leads = selected_leads
+    st.session_state.enable_zscore = enable_zscore
+    st.session_state.selected_age_group = selected_age_group
+    st.session_state.window_sizes = window_sizes
+    st.session_state.zscore_threshold = zscore_threshold
+    
+    # 写入临时文件
     temp_dir = tempfile.gettempdir()
     edf_path = os.path.join(temp_dir, edf_file.name)
     with open(edf_path, "wb") as f:
@@ -107,8 +107,24 @@ if run_button or ('data_loaded' in st.session_state and edf_file is not None):
         with open(prob_path, "wb") as f:
             f.write(prob_file.getvalue())
     
-    if prob_path is None:
-        st.warning("⚠️ 未上传Prob文件，将跳过伪迹过滤")
+    st.session_state.edf_path = edf_path
+    st.session_state.data_loaded = True
+
+elif 'data_loaded' in st.session_state and st.session_state.get('edf_path'):
+    # 恢复之前的状态
+    edf_path = st.session_state.edf_path
+    epoch_len_sec = st.session_state.epoch_len_sec
+    nperseg_len = st.session_state.nperseg_len
+    art_threshold = st.session_state.art_threshold
+    selected_leads = st.session_state.selected_leads
+    enable_zscore = st.session_state.get('enable_zscore', True)
+    selected_age_group = st.session_state.get('selected_age_group', '19-44')
+    window_sizes = st.session_state.get('window_sizes', [1, 2, 5, 10, 15])
+    zscore_threshold = st.session_state.get('zscore_threshold', 2.0)
+    prob_path = None
+else:
+    st.info("👆 请上传EDF文件并点击「运行分析」")
+    st.stop()
     
     if not os.path.exists(edf_path):
         st.error(f"❌ EDF文件不存在: {edf_path}")
