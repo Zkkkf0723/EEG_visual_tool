@@ -50,10 +50,22 @@ with st.sidebar:
     st.header("⚙️ 参数设置")
     
     st.markdown("**📁 上传EDF文件**")
-    edf_file = st.file_uploader("选择EDF文件", type=["edf"])
+    edf_file = st.file_uploader("选择EDF文件", type=["edf"], key="edf_uploader")
+    
+    # 保存edf_file到session_state
+    if edf_file is not None:
+        st.session_state.edf_file_uploaded = edf_file
+    elif 'edf_file_uploaded' in st.session_state:
+        edf_file = st.session_state.edf_file_uploaded
     
     st.markdown("**📁 上传Prob文件（可选）**")
-    prob_file = st.file_uploader("选择Prob文件（用于伪迹过滤）", type=["pkl"])
+    prob_file = st.file_uploader("选择Prob文件（用于伪迹过滤）", type=["pkl"], key="prob_uploader")
+    
+    # 保存prob_file到session_state
+    if prob_file is not None:
+        st.session_state.prob_file_uploaded = prob_file
+    elif 'prob_file_uploaded' in st.session_state:
+        prob_file = st.session_state.prob_file_uploaded
     
     epoch_len_sec = st.slider("Epoch长度(秒)", 1, 10, 5)
     
