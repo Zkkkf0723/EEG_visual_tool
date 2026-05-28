@@ -94,14 +94,16 @@ if run_button or 'data_loaded' in st.session_state:
         st.info("👆 请先上传EDF文件")
         st.stop()
     
-    import io
-    edf_path = "/tmp/" + edf_file.name
+    import tempfile
+    import shutil
+    temp_dir = tempfile.gettempdir()
+    edf_path = os.path.join(temp_dir, edf_file.name)
     with open(edf_path, "wb") as f:
         f.write(edf_file.getvalue())
     
     prob_path = None
     if prob_file is not None:
-        prob_path = "/tmp/" + prob_file.name
+        prob_path = os.path.join(temp_dir, prob_file.name)
         with open(prob_path, "wb") as f:
             f.write(prob_file.getvalue())
     
