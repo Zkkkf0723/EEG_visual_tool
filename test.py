@@ -47,7 +47,11 @@ st.title("🧠 EEG PSD 可视化工具")
 with st.sidebar:
     st.header("⚙️ 参数设置")
     
-    edf_path = st.text_input("EDF文件路径", "")
+    st.markdown("**📁 上传EDF文件**")
+    edf_file = st.file_uploader("选择EDF文件", type=["edf"])
+    
+    st.markdown("**📁 上传Prob文件（可选）**")
+    prob_file = st.file_uploader("选择Prob文件（用于伪迹过滤）", type=["pkl"])
     
     epoch_len_sec = st.slider("Epoch长度(秒)", 1, 10, 5)
     
@@ -86,11 +90,27 @@ if run_button or 'data_loaded' in st.session_state:
         window_sizes = st.session_state.get('window_sizes', [1, 2, 5, 10, 15])
         zscore_threshold = st.session_state.get('zscore_threshold', 2.0)
     
-    prob_path = edf_path.replace(".edf", "_prob_230516_with_softmax_half_second_EBA.pkl")
+    if edf_file is None:
+        st.info("👆 请先上传EDF文件")
+        st.stop()
+    
+    import io
+    edf_path = "/tmp/" + edf_file.name
+    with open(edf_path, "wb") as f:
+        f.write(edf_file.getvalue())
+    
+    prob_path = None
+    if prob_file is not None:
+        prob_path = "/tmp/" + prob_file.name
+        with open(prob_path, "wb") as f:
+            f.write(prob_file.getvalue())
+    
+    if prob_path is None:
+        st.warning("⚠️ 未上传Prob文件，将跳过伪迹过滤")
     
     if not os.path.exists(edf_path):
         st.error(f"❌ EDF文件不存在: {edf_path}")
-    elif not os.path.exists(prob_path):
+    elif prob_path is not None and not os.path.exists(prob_path):
         st.error(f"❌ Prob文件不存在: {prob_path}")
     else:
         with st.spinner("正在加载数据..."):
@@ -106,8 +126,10 @@ if run_button or 'data_loaded' in st.session_state:
             
             leads_montage_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
             
-            with open(prob_path, 'rb') as f:
-                prob_dict = pickle.load(f)
+            prob_dict = None
+            if prob_path is not None and os.path.exists(prob_path):
+                with open(prob_path, 'rb') as f:
+                    prob_dict = pickle.load(f)
         
         with st.spinner("正在计算PSD..."):
             fs = 256
@@ -125,14 +147,16 @@ if run_button or 'data_loaded' in st.session_state:
                 one_signal_reshape = one_signal[0:epoch_count * epoch_len_sec * fs].reshape(epoch_count, epoch_len_sec * fs)
                 freqs, psds = signal.welch(one_signal_reshape, fs=fs, window='hann', nperseg=fs * nperseg_len)
                 
-                _prob = prob_dict[lead_name]
-                if epoch_count * epoch_len_sec != np.shape(_prob)[0] * 2:
-                    _prob = np.pad(_prob, ((0, 1), (0, 0)), mode='constant', constant_values=0)
-                art_prob_index = _prob[:, 2] + _prob[:, 1]
-                prob_len = epoch_count * epoch_len_sec * 2
-                mean_art_prob = np.max(art_prob_index[:prob_len].reshape(epoch_count, epoch_len_sec * 2), axis=1)
-                
-                psds_without_art = psds[mean_art_prob < art_threshold, :]
+                if prob_dict is not None:
+                    _prob = prob_dict[lead_name]
+                    if epoch_count * epoch_len_sec != np.shape(_prob)[0] * 2:
+                        _prob = np.pad(_prob, ((0, 1), (0, 0)), mode='constant', constant_values=0)
+                    art_prob_index = _prob[:, 2] + _prob[:, 1]
+                    prob_len = epoch_count * epoch_len_sec * 2
+                    mean_art_prob = np.max(art_prob_index[:prob_len].reshape(epoch_count, epoch_len_sec * 2), axis=1)
+                    psds_without_art = psds[mean_art_prob < art_threshold, :]
+                else:
+                    psds_without_art = psds
                 
                 PSD_dict[lead_name] = 10 * np.log10(psds_without_art)
                 PSD_array_no_art.append(psds_without_art)
