@@ -47,7 +47,7 @@ st.title("🧠 EEG PSD 可视化工具")
 with st.sidebar:
     st.header("⚙️ 参数设置")
     
-    edf_path = st.text_input("EDF文件路径", "D:\\work\\EDF_dir\\4.edf")
+    edf_path = st.text_input("EDF文件路径", "")
     
     epoch_len_sec = st.slider("Epoch长度(秒)", 1, 10, 5)
     
