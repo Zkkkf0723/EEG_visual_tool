@@ -164,7 +164,7 @@ if run_button or 'data_loaded' in st.session_state:
         
         if enable_zscore:
             with st.spinner("正在加载正常参考数据..."):
-                json_dir = r"d:\work\json"
+                json_dir = os.path.join(os.path.dirname(__file__), "json")
                 all_ref_data = load_normal_reference(json_dir, window_sizes)
         else:
             all_ref_data = None
