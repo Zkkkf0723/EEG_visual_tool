@@ -80,8 +80,8 @@ with st.sidebar:
     
     run_button = st.button("🚀 运行分析", type="primary")
 
-if run_button or 'data_loaded' in st.session_state:
-    if not run_button and 'data_loaded' in st.session_state:
+if run_button or ('data_loaded' in st.session_state and edf_file is not None):
+    if not run_button and 'data_loaded' in st.session_state and edf_file is not None:
         edf_path = st.session_state.edf_path
         epoch_len_sec = st.session_state.epoch_len_sec
         nperseg_len = st.session_state.nperseg_len
