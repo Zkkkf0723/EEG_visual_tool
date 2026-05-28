@@ -7,6 +7,8 @@ import pickle
 import numpy as np
 import json
 import os
+import tempfile
+import shutil
 from a_montage_tools import *
 from a_psd_stat_tool import *
 
@@ -94,8 +96,6 @@ if run_button or 'data_loaded' in st.session_state:
         st.info("👆 请先上传EDF文件")
         st.stop()
     
-    import tempfile
-    import shutil
     temp_dir = tempfile.gettempdir()
     edf_path = os.path.join(temp_dir, edf_file.name)
     with open(edf_path, "wb") as f:
