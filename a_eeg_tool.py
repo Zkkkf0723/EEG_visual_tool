@@ -1402,7 +1402,7 @@ def merge_adjacent_locs_with(locs, margin=256*1.5):
 
 if __name__ == "__main__":
 
-    file_list = ['D:\SPH_ECG\\16111018\\2(5)\\2(5).eeg']
+    file_list = [r'D:\SPH_ECG\\16111018\\2(5)\\2(5).eeg']
     print(len(file_list))
 
     for v in file_list[:]:
