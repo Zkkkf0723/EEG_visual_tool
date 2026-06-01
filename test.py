@@ -214,14 +214,14 @@ def main():
                 fs = int(edf_data['sfreq'])
                 duration_sec = edf_data['duration_sec']
                 
-                # 关键修复：保持原有的epoch计算方式
+                
                 epoch_count = int(duration_sec / epoch_len_sec)
                 
                 if epoch_count == 0:
                     st.error("❌ Epoch长度超过数据总时长")
                     return
                 
-                # epoch_times 保持原有逻辑：从0到epoch_count-1
+                
                 epoch_times = list(range(epoch_count))
                 
                 spec_dict_all = {}
@@ -237,7 +237,7 @@ def main():
                     
                     one_signal = leads_montage_dict[lead_name]
                     
-                    # 保持原有的reshape逻辑
+                    
                     total_samples = epoch_count * epoch_len_sec * fs
                     
                     if len(one_signal) < total_samples:
@@ -246,7 +246,7 @@ def main():
                     one_signal_reshape = one_signal[:total_samples].reshape(epoch_count, epoch_len_sec * fs)
                     freqs, psds = signal.welch(one_signal_reshape, fs=fs, window='hann', nperseg=fs * nperseg_len)
                     
-                    # 伪迹过滤（保持原有逻辑）
+                    
                     if prob_dict is not None and lead_name in prob_dict:
                         _prob = prob_dict[lead_name]
                         # 保持原有的prob处理逻辑
@@ -481,9 +481,9 @@ def main():
                             st.metric(name, f"{val:.2f}")
     
     elif edf_file is None:
-        st.info("👈 请上传EDF文件后点击「运行分析」")
+        st.info("👈 请上传EDF文件")
     elif not need_compute:
-        st.info("👈 设置好参数后点击「运行分析」按钮")
+        st.info("👈 设置参数")
 
 if __name__ == "__main__":
     main()
