@@ -147,9 +147,6 @@ def main():
         )
         
         zscore_threshold = st.slider("Z-score异常阈值", 1.0, 3.0, 2.0, 0.1, key="zscore_threshold")
-        
-        st.divider()
-        run_button = st.button("🚀 运行分析", type="primary", width="stretch")
     
     # 构建当前参数
     current_params = {
@@ -165,10 +162,10 @@ def main():
         'zscore_threshold': zscore_threshold
     }
     
-    # 检查是否需要重新计算
-    need_compute = run_button
+    # 检查是否需要重新计算（edf_file存在且参数变化时自动计算）
+    need_compute = False
     
-    if not need_compute and edf_file:
+    if edf_file:
         if st.session_state.analysis_params != current_params:
             need_compute = True
     
