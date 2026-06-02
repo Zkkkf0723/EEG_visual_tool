@@ -68,7 +68,7 @@ def load_normal_reference_data(json_dir_hash: str):
     possible_paths = [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Normal_Reference", "normal", "combined_result.json"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "normal", "combined_result.json"),
-        r"d:\work\Normal_Reference\normal\combined_result.json",
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Normal_Reference", "normal", "combined_result.json"),
     ]
     
     json_path = None
@@ -516,7 +516,7 @@ def main():
         tab1, tab2, tab3 = st.tabs(["📊 频段功率", "📈 功率比率", "📋 统计汇总"])
         
         with tab1:
-            st.subheader("各频段功率分布（基于PSD）")
+            st.subheader("各频段功率分布")
             
             for lead in valid_leads:
                 sd = spec_dict_all[lead]
