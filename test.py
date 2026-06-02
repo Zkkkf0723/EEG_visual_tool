@@ -235,6 +235,8 @@ def get_asymmetry_ref(all_ref_data, age_group, asymmetry_key, ref_type='mean'):
 
 
 # ========== 主程序 ==========
+CODE_VERSION = "v2"  # 代码变更时递增此值以强制清除旧缓存
+
 def main():
     # 初始化session_state
     if 'psd_results' not in st.session_state:
@@ -326,6 +328,7 @@ def main():
     
     # 构建当前参数
     current_params = {
+        'code_version': CODE_VERSION,
         'edf_name': edf_file.name if edf_file else None,
         'prob_name': prob_file.name if prob_file else None,
         'epoch_len_sec': epoch_len_sec,
