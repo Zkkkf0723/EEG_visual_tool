@@ -11,6 +11,34 @@ from scipy import signal
 from a_montage_tools import *
 from a_psd_stat_tool import *
 
+
+def normalize_electrode_name(name):
+    """
+    标准化电极名称大小写
+    例如: "FP1" -> "Fp1", "fp2" -> "Fp2", "FPZ" -> "Fpz", "FZ" -> "Fz"
+    遵循 10-20 系统命名规范：额极(Fp)的p小写，中线(z)的z小写
+    """
+    if not name:
+        return name
+    
+    name_upper = name.upper()
+    
+    # 特殊处理：Fp (额极) 系列 - 第二个字母 p 小写
+    # 包括: Fp1, Fp2, Fpz 等
+    if name_upper.startswith('FP') and len(name) > 2:
+        third_char = name[2].lower()  # 第3个字符小写
+        return 'Fp' + third_char + (name[3:] if len(name) > 3 else '')
+    
+    # 其他中线电极：最后一个 z 小写
+    # 包括: Fz, Cz, Pz, Oz 等
+    if name_upper.endswith('Z') and len(name) > 1:
+        return name[:-1] + 'z'
+    
+    # 其他电极：首字母大写，其余保持
+    # 例如 F3, C4, O1, T5 等
+    return name.capitalize() if len(name) > 1 else name.upper()
+
+
 # 设置页面
 st.set_page_config(page_title="PSD 可视化工具", layout="wide")
 
@@ -263,29 +291,6 @@ def main():
         
         prob_file = st.file_uploader("选择Prob文件（可选）", type=["pkl"], key="prob_uploader")
         
-        # 预加载通道名（轻量级操作，只读头部信息）
-        if edf_file is not None:
-            try:
-                temp_dir = tempfile.gettempdir()
-                ext = "fif" if eeg_format == "FIF" else "edf"
-                temp_path = os.path.join(temp_dir, f"temp_preview_{hash(edf_file.getvalue())}.{ext}")
-                with open(temp_path, "wb") as f:
-                    f.write(edf_file.getvalue())
-                if ext == "fif":
-                    raw = mne.io.read_raw_fif(temp_path, preload=False)
-                else:
-                    raw = mne.io.read_raw_edf(temp_path, preload=False)
-                st.session_state.available_channels = list(raw.ch_names)
-                try:
-                    os.remove(temp_path)
-                except:
-                    pass
-            except Exception as e:
-                st.session_state.available_channels = None
-                st.warning(f"⚠️ 无法读取通道信息: {e}")
-        else:
-            st.session_state.available_channels = None
-        
         st.divider()
         
         st.subheader("📊 分析参数")
@@ -321,19 +326,11 @@ def main():
         
         # 根据选择显示对应的导联列表
         if "耳电极" in lead_type:
-            if hasattr(st.session_state, 'available_channels') and st.session_state.available_channels:
-                lead_options = sorted(st.session_state.available_channels)
-                default_leads = lead_options[:2] if len(lead_options) >= 2 else lead_options[:1]
-            else:
-                lead_options = ear_leads
-                default_leads = ['Fp1-A1', 'F3-A1']
+            lead_options = ear_leads
+            default_leads = ['Fp1-A1', 'F3-A1']
         elif "平均" in lead_type:
-            if hasattr(st.session_state, 'available_channels') and st.session_state.available_channels:
-                lead_options = sorted(st.session_state.available_channels)
-                default_leads = lead_options[:2] if len(lead_options) >= 2 else lead_options[:1]
-            else:
-                lead_options = avg_leads
-                default_leads = ['Fp1-AVG', 'F3-AVG']
+            lead_options = avg_leads
+            default_leads = ['Fp1-AVG', 'F3-AVG']
         else:
             lead_options = bipolar_leads
             default_leads = ['Fp1-F3', 'F3-C3']
@@ -414,25 +411,48 @@ def main():
                 for idx, ch_name in enumerate(edf_data['ch_names']):
                     all_data[ch_name] = edf_data['data'][idx]
                 
+                # 通道名称归一化：剥离前缀和后缀，使 montage 函数能匹配标准电极名
+                # 处理格式: "EEG FP1-REF" -> "Fp1"
+                _prefixes = ['EEG ', 'eeg ', 'EEG-', 'eeg-']
+                _ref_suffixes = ['-REF', '-ref', '-LE', '-le', '-AVG', '-avg', '-A1', '-a1', '-A2', '-a2']
+                all_data_normalized = dict(all_data)
+                for ch_name, ch_data in list(all_data.items()):
+                    norm_name = ch_name
+                    # 1. 去掉前缀 (如 "EEG ")
+                    for prefix in _prefixes:
+                        if norm_name.upper().startswith(prefix.upper()):
+                            norm_name = norm_name[len(prefix):]
+                            break
+                    # 2. 去掉后缀 (如 "-REF")
+                    for suffix in _ref_suffixes:
+                        if norm_name.upper().endswith(suffix.upper()):
+                            norm_name = norm_name[:-len(suffix)]
+                            break
+                    # 3. 标准化电极名大小写 (FP1 -> Fp1, FP2 -> Fp2, 等)
+                    norm_name = normalize_electrode_name(norm_name)
+                    if norm_name != ch_name:
+                        all_data_normalized[norm_name] = ch_data
+                
                 # 5. 根据导联类型计算数据
                 if "耳电极" in lead_type:
                     status.update(label="👂 计算耳电极参考...")
-                    ear_format_channels = [ch for ch in all_data.keys() if 'fp1' in ch.lower()]
+                    ear_format_channels = [ch for ch in all_data.keys()
+                                           if ch.upper().endswith('-A1') or ch.upper().endswith('-A2')]
                     if len(ear_format_channels) > 0:
                         leads_montage_dict = {}
                         for ch_name in ear_format_channels:
                             data = butter_bandpass_filter(all_data[ch_name], 0.5, 70, fs=256)
                             leads_montage_dict[ch_name] = norch_50(np.array(data))
                     else:
-                        full_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                        full_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
                         leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
                 elif "平均" in lead_type:
                     status.update(label="📊 计算平均参考...")
-                    full_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                    full_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
                     leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-AVG')}
                 else:
                     status.update(label="🔗 计算双极导联...")
-                    leads_montage_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                    leads_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
                 
                 # 6. 计算PSD（保持原有的epoch计算逻辑）
                 status.update(label="📊 计算PSD...")
@@ -568,66 +588,64 @@ def main():
             for lead in valid_leads:
                 sd = spec_dict_all[lead]
                 
-                # 使用dB版PSD计算频段功率时序
+                # 使用dB版PSD计算频段功率时序（完整11个频段）
                 if 'psd_db' in sd:
                     psd_data = sd['psd_db']  # 形状: (epoch数, 频率点数)，单位 dB
                     
-                    delta_power = np.mean(psd_data[:, 1:5], axis=1)   # 1-4Hz
-                    theta_power = np.mean(psd_data[:, 4:9], axis=1)   # 4-8Hz
-                    alpha_power = np.mean(psd_data[:, 8:14], axis=1)  # 8-13Hz
-                    beta_power = np.mean(psd_data[:, 13:31], axis=1)  # 13-30Hz
-                    gamma_power = np.mean(psd_data[:, 30:71], axis=1) # 30-70Hz
+                    # 基本频段
+                    delta_power = np.mean(psd_data[:, 1:5], axis=1)      # 1-4Hz
+                    theta_power = np.mean(psd_data[:, 4:9], axis=1)      # 4-8Hz
+                    alpha_power = np.mean(psd_data[:, 8:14], axis=1)     # 8-13Hz
+                    beta_power = np.mean(psd_data[:, 13:31], axis=1)     # 13-30Hz
+                    gamma_power = np.mean(psd_data[:, 30:71], axis=1)    # 30-70Hz
                     
-                    # 创建图表
+                    # Alpha 子频段
+                    alpha_1_power = np.mean(psd_data[:, 8:9], axis=1)   # 8-9Hz
+                    alpha_2_power = np.mean(psd_data[:, 9:11], axis=1)  # 9-11Hz
+                    alpha_3_power = np.mean(psd_data[:, 11:13], axis=1) # 11-13Hz
+                    
+                    # Beta 子频段
+                    beta_1_power = np.mean(psd_data[:, 13:20], axis=1)  # 13-20Hz
+                    beta_2_power = np.mean(psd_data[:, 20:30], axis=1)  # 20-30Hz
+                    
+                    # Gamma 子频段
+                    gamma_1_power = np.mean(psd_data[:, 30:50], axis=1) # 30-50Hz
+                    gamma_2_power = np.mean(psd_data[:, 50:70], axis=1) # 50-70Hz
+                    
+                    # 创建图表 - 完整11个频段
                     fig = go.Figure()
                     
-                    fig.add_trace(go.Scatter(
-                        x=epoch_times[:len(delta_power)],
-                        y=delta_power,
-                        name="Delta (1-4Hz)",
-                        mode='lines',
-                        line=dict(color='purple', width=1.5)
-                    ))
+                    _band_configs = [
+                        (delta_power, "Delta (1-4Hz)", '#9467bd'),
+                        (theta_power, "Theta (4-8Hz)", '#4363d8'),
+                        (alpha_power, "Alpha (8-13Hz)", '#e74c3c'),
+                        (alpha_1_power, "Alpha₁ (8-9Hz)", '#ff9999'),
+                        (alpha_2_power, "Alpha₂ (9-11Hz)", '#cc6666'),
+                        (alpha_3_power, "Alpha₃ (11-13Hz)", '#993333'),
+                        (beta_power, "Beta (13-30Hz)", '#2ecc71'),
+                        (beta_1_power, "Beta₁ (13-20Hz)", '#90ee90'),
+                        (beta_2_power, "Beta₂ (20-30Hz)", '#228b22'),
+                        (gamma_power, "Gamma (30-70Hz)", '#f39c12'),
+                        (gamma_1_power, "Gamma₁ (30-50Hz)", '#ffd700'),
+                        (gamma_2_power, "Gamma₂ (50-70Hz)", '#ff8c00'),
+                    ]
                     
-                    fig.add_trace(go.Scatter(
-                        x=epoch_times[:len(theta_power)],
-                        y=theta_power,
-                        name="Theta (4-8Hz)",
-                        mode='lines',
-                        line=dict(color='blue', width=1.5)
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=epoch_times[:len(alpha_power)],
-                        y=alpha_power,
-                        name="Alpha (8-13Hz)",
-                        mode='lines',
-                        line=dict(color='red', width=1.5)
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=epoch_times[:len(beta_power)],
-                        y=beta_power,
-                        name="Beta (13-30Hz)",
-                        mode='lines',
-                        line=dict(color='green', width=1.5)
-                    ))
-                    
-                    fig.add_trace(go.Scatter(
-                        x=epoch_times[:len(gamma_power)],
-                        y=gamma_power,
-                        name="Gamma (30-70Hz)",
-                        mode='lines',
-                        line=dict(color='orange', width=1.5)
-                    ))
+                    for power_data, name, color in _band_configs:
+                        fig.add_trace(go.Scatter(
+                            x=epoch_times[:len(power_data)],
+                            y=power_data,
+                            name=name,
+                            mode='lines',
+                            line=dict(color=color, width=1.2)
+                        ))
                     
                     fig.update_layout(
-                        title=dict(text=f"<b>{lead}</b> 频段功率", x=0.5),
+                        title=dict(text=f"<b>{lead}</b> 频段功率分布 (11频段)", x=0.5),
                         xaxis_title="Epoch",
                         yaxis_title="功率 (dB/Hz)",
-                        height=400,
-                        legend=dict(x=1.02, y=1, bgcolor='rgba(255,255,255,0.8)'),
-                        margin=dict(r=100)
+                        height=500,
+                        legend=dict(x=1.02, y=1, bgcolor='rgba(255,255,255,0.9)', font=dict(size=10)),
+                        margin=dict(r=150)
                     )
                     st.plotly_chart(fig, width="stretch")
         

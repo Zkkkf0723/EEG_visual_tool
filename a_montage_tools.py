@@ -677,10 +677,16 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
         "Fz-AVG": butter_bandpass_filter(FZ, low_cut= l_cut, high_cut=h_cut, fs=256),
         "Cz-AVG": butter_bandpass_filter(CZ, low_cut= l_cut, high_cut=h_cut, fs=256),
         "Pz-AVG": butter_bandpass_filter(PZ, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Fpz-AVG": butter_bandpass_filter(get_ch("Fpz"), low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Oz-AVG": butter_bandpass_filter(get_ch("Oz"), low_cut= l_cut, high_cut=h_cut, fs=256),
-
     }
+    
+    # 可选电极（10-10系统扩展电极，可能不存在）
+    _optional_electrodes = ["Fpz", "Oz"]
+    for opt_ch in _optional_electrodes:
+        try:
+            out_dict[f"{opt_ch}-AVG"] = butter_bandpass_filter(get_ch(opt_ch), low_cut=l_cut, high_cut=h_cut, fs=256)
+        except KeyError:
+            pass  # 电极不存在则跳过
+
 
     for k in out_dict.keys():
         temp_a = norch_50(np.array(out_dict[k]))
