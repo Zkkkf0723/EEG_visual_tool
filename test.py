@@ -386,7 +386,7 @@ def main():
                 # 5. 根据导联类型计算数据
                 if "耳电极" in lead_type:
                     status.update(label="👂 计算耳电极参考...")
-                    ear_format_channels = [ch for ch in all_data.keys() if '-A1' in ch or '-A2' in ch]
+                    ear_format_channels = [ch for ch in all_data.keys() if 'fp1' in ch.lower()]
                     if len(ear_format_channels) > 0:
                         leads_montage_dict = {}
                         for ch_name in ear_format_channels:
