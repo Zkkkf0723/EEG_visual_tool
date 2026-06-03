@@ -263,6 +263,29 @@ def main():
         
         prob_file = st.file_uploader("选择Prob文件（可选）", type=["pkl"], key="prob_uploader")
         
+        # 预加载通道名（轻量级操作，只读头部信息）
+        if edf_file is not None:
+            try:
+                temp_dir = tempfile.gettempdir()
+                ext = "fif" if eeg_format == "FIF" else "edf"
+                temp_path = os.path.join(temp_dir, f"temp_preview_{hash(edf_file.getvalue())}.{ext}")
+                with open(temp_path, "wb") as f:
+                    f.write(edf_file.getvalue())
+                if ext == "fif":
+                    raw = mne.io.read_raw_fif(temp_path, preload=False)
+                else:
+                    raw = mne.io.read_raw_edf(temp_path, preload=False)
+                st.session_state.available_channels = list(raw.ch_names)
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+            except Exception as e:
+                st.session_state.available_channels = None
+                st.warning(f"⚠️ 无法读取通道信息: {e}")
+        else:
+            st.session_state.available_channels = None
+        
         st.divider()
         
         st.subheader("📊 分析参数")
@@ -298,11 +321,19 @@ def main():
         
         # 根据选择显示对应的导联列表
         if "耳电极" in lead_type:
-            lead_options = ear_leads
-            default_leads = ['Fp1-A1', 'F3-A1']
+            if hasattr(st.session_state, 'available_channels') and st.session_state.available_channels:
+                lead_options = sorted(st.session_state.available_channels)
+                default_leads = lead_options[:2] if len(lead_options) >= 2 else lead_options[:1]
+            else:
+                lead_options = ear_leads
+                default_leads = ['Fp1-A1', 'F3-A1']
         elif "平均" in lead_type:
-            lead_options = avg_leads
-            default_leads = ['Fp1-AVG', 'F3-AVG']
+            if hasattr(st.session_state, 'available_channels') and st.session_state.available_channels:
+                lead_options = sorted(st.session_state.available_channels)
+                default_leads = lead_options[:2] if len(lead_options) >= 2 else lead_options[:1]
+            else:
+                lead_options = avg_leads
+                default_leads = ['Fp1-AVG', 'F3-AVG']
         else:
             lead_options = bipolar_leads
             default_leads = ['Fp1-F3', 'F3-C3']
