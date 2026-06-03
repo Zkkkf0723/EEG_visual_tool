@@ -383,9 +383,25 @@ def main():
                 for idx, ch_name in enumerate(edf_data['ch_names']):
                     all_data[ch_name] = edf_data['data'][idx]
                 
-                # 5. 计算双极导联
-                status.update(label="🔗 计算双极导联...")
-                leads_montage_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                # 5. 根据导联类型计算数据
+                if "耳电极" in lead_type:
+                    status.update(label="👂 计算耳电极参考...")
+                    ear_format_channels = [ch for ch in all_data.keys() if '-A1' in ch or '-A2' in ch]
+                    if len(ear_format_channels) > 0:
+                        leads_montage_dict = {}
+                        for ch_name in ear_format_channels:
+                            data = butter_bandpass_filter(all_data[ch_name], 0.5, 70, fs=256)
+                            leads_montage_dict[ch_name] = norch_50(np.array(data))
+                    else:
+                        full_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                        leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
+                elif "平均" in lead_type:
+                    status.update(label="📊 计算平均参考...")
+                    full_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
+                    leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-AVG')}
+                else:
+                    status.update(label="🔗 计算双极导联...")
+                    leads_montage_dict = get_bipolar_data_caueeg(all_data, 0.5, 70)
                 
                 # 6. 计算PSD（保持原有的epoch计算逻辑）
                 status.update(label="📊 计算PSD...")
