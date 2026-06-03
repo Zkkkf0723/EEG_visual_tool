@@ -335,78 +335,37 @@ def main():
             lead_options = bipolar_leads
             default_leads = ['Fp1-F3', 'F3-C3']
         
-        # 大脑半球快速选择 (L/R/全脑)
-        col_hemi1, col_hemi2 = st.columns([2, 3])
-        with col_hemi1:
-            hemisphere = st.radio(
-                "🧠 选择脑区",
-                ["全脑", "左脑 (L)", "右脑 (R)"],
-                horizontal=True,
-                key="hemisphere_select"
-            )
-        with col_hemi2:
-            if hemisphere == "左脑 (L)":
-                st.info("💡 左脑导联: Fp1, F3, C3, P3, O1, F7, T3, T5 等")
-            elif hemisphere == "右脑 (R)":
-                st.info("💡 右脑导联: Fp2, F4, C4, P4, O2, F8, T4, T6 等")
+        # 定义左脑/右脑导联
+        def _is_left_lead(name):
+            """判断是否为左脑导联（奇数编号或A1参考）"""
+            n = name.upper()
+            return any(x in n for x in ['1-', '3-', '5-', '7-', '-A1', 'F7', 'T3', 'T5', 'O1', 'FP1'])
+        
+        def _is_right_lead(name):
+            """判断是否为右脑导联（偶数编号或A2参考）"""
+            n = name.upper()
+            return any(x in n for x in ['2-', '4-', '6-', '8-', '-A2', 'F8', 'T4', 'T6', 'O2', 'FP2'])
+        
+        left_leads = [l for l in lead_options if _is_left_lead(l)]
+        right_leads = [l for l in lead_options if _is_right_lead(l)]
+        
+        # 在 multiselect 选项中添加 L/R/全脑 快捷组
+        lead_options_with_groups = ["🧠 全脑（全部导联）", "🧠 左脑 (L)", "🧠 右脑 (R)"] + lead_options
+        
+        selected_leads_raw = st.multiselect("选择导联", lead_options_with_groups, default=default_leads, key="selected_leads")
+        
+        # 展开快捷组选项为实际导联列表
+        selected_leads = []
+        for item in selected_leads_raw:
+            if item == "🧠 全脑（全部导联）":
+                selected_leads.extend(lead_options)
+            elif item == "🧠 左脑 (L)":
+                selected_leads.extend(left_leads)
+            elif item == "🧠 右脑 (R)":
+                selected_leads.extend(right_leads)
             else:
-                st.info("💡 全脑: 显示所有可用导联")
-        
-        # 根据脑区筛选导联
-        def filter_leads_by_hemisphere(leads, hemi):
-            """
-            根据脑区筛选导联
-            左脑(L): 包含 1, 3, 5, 7 或 -A1 的导联 + 中线导联
-            右脑(R): 包含 2, 4, 6, 8 或 -A2 的导联 + 中线导联
-            全脑: 所有导联
-            """
-            if hemi == "全脑":
-                return leads
-            
-            filtered = []
-            for lead in leads:
-                lead_upper = lead.upper()
-                # 中线导联始终显示 (Fz, Cz, Pz, Oz等)
-                if any(mid in lead_upper for mid in ['Z-', '-PZ', '-CZ', '-OZ', '-FZ']):
-                    filtered.append(lead)
-                elif hemi == "左脑 (L)":
-                    # 左脑: 奇数(1,3,5,7) 或 A1 参考
-                    if any(suffix in lead_upper for suffix in ['-A1', '1-', '1-A', 'F7', 'T3', 'T5', 'O1']):
-                        filtered.append(lead)
-                    elif any(f"{i}" in lead_upper.replace('Fp1','').replace('FP1','') for i in ['1', '3', '5', '7'] if len(lead)>3):
-                        if not any(r in lead_upper for r in ['2', '4', '6', '8', '-A2']):
-                            filtered.append(lead)
-                elif hemi == "右脑 (R)":
-                    # 右脑: 偶数(2,4,6,8) 或 A2 参考
-                    if any(suffix in lead_upper for suffix in ['-A2', '2-', '2-A', 'F8', 'T4', 'T6', 'O2']):
-                        filtered.append(lead)
-                    elif not any(l in lead_upper for l in ['1', '3', '5', '7', '-A1']):
-                        if any(f"{i}" in lead_upper for i in ['2', '4', '6', '8']):
-                            filtered.append(lead)
-            return filtered if filtered else leads
-        
-        # 根据脑区更新可选导联
-        filtered_lead_options = filter_leads_by_hemisphere(lead_options, hemisphere)
-        
-        # 一键全选按钮
-        col_btn1, col_btn2 = st.columns([1, 3])
-        with col_btn1:
-            select_all_btn = st.button(f"✅ 全选{hemisphere.split()[0]}导联", key="select_all_btn")
-        with col_btn2:
-            if select_all_btn:
-                st.success(f"已选中全部 {len(filtered_lead_options)} 个{hemisphere}导联")
-        
-        # 设置默认选中项（点击全选按钮时默认为空，由按钮控制）
-        if select_all_btn:
-            default_for_hemi = list(filtered_lead_options)  # 全部选中
-        elif hemisphere == "左脑 (L)":
-            default_for_hemi = [l for l in ['Fp1-A1', 'F3-A1', 'Fp1-F3', 'F3-C3', 'Fp1-AVG', 'F3-AVG'] if l in filtered_lead_options][:2]
-        elif hemisphere == "右脑 (R)":
-            default_for_hemi = [l for l in ['Fp2-A2', 'F4-A2', 'Fp2-F4', 'F4-C4', 'Fp2-AVG', 'F4-AVG'] if l in filtered_lead_options][:2]
-        else:
-            default_for_hemi = default_leads
-        
-        selected_leads = st.multiselect("选择导联", filtered_lead_options, default=default_for_hemi, key="selected_leads")
+                selected_leads.append(item)
+        selected_leads = list(dict.fromkeys(selected_leads))  # 去重保序
         
         st.divider()
         
@@ -656,69 +615,86 @@ def main():
         with tab1:
             st.subheader("各频段功率分布")
             
+            # 频段选择器
+            _all_band_names = [
+                "Delta (1-4Hz)", "Theta (4-8Hz)",
+                "Alpha (8-13Hz)", "Alpha₁ (8-9Hz)", "Alpha₂ (9-11Hz)", "Alpha₃ (11-13Hz)",
+                "Beta (13-30Hz)", "Beta₁ (13-20Hz)", "Beta₂ (20-30Hz)",
+                "Gamma (30-70Hz)", "Gamma₁ (30-50Hz)", "Gamma₂ (50-70Hz)",
+            ]
+            selected_bands = st.multiselect(
+                "选择要显示的频段",
+                _all_band_names,
+                default=_all_band_names,
+                key="band_select"
+            )
+            
+            _band_keys = [
+                ('delta',   "Delta (1-4Hz)",   '#9467bd'),
+                ('theta',   "Theta (4-8Hz)",   '#4363d8'),
+                ('alpha',   "Alpha (8-13Hz)",  '#e74c3c'),
+                ('alpha_1', "Alpha₁ (8-9Hz)",  '#ff9999'),
+                ('alpha_2', "Alpha₂ (9-11Hz)", '#cc6666'),
+                ('alpha_3', "Alpha₃ (11-13Hz)",'#993333'),
+                ('beta',    "Beta (13-30Hz)",  '#2ecc71'),
+                ('beta_1',  "Beta₁ (13-20Hz)", '#90ee90'),
+                ('beta_2',  "Beta₂ (20-30Hz)", '#228b22'),
+                ('gamma',   "Gamma (30-70Hz)", '#f39c12'),
+                ('gamma_1', "Gamma₁ (30-50Hz)",'#ffd700'),
+                ('gamma_2', "Gamma₂ (50-70Hz)",'#ff8c00'),
+            ]
+
             for lead in valid_leads:
                 sd = spec_dict_all[lead]
-                
-                # 使用dB版PSD计算频段功率时序（完整11个频段）
-                if 'psd_db' in sd:
-                    psd_data = sd['psd_db']  # 形状: (epoch数, 频率点数)，单位 dB
-                    
-                    # 基本频段
-                    delta_power = np.mean(psd_data[:, 1:5], axis=1)      # 1-4Hz
-                    theta_power = np.mean(psd_data[:, 4:9], axis=1)      # 4-8Hz
-                    alpha_power = np.mean(psd_data[:, 8:14], axis=1)     # 8-13Hz
-                    beta_power = np.mean(psd_data[:, 13:31], axis=1)     # 13-30Hz
-                    gamma_power = np.mean(psd_data[:, 30:71], axis=1)    # 30-70Hz
-                    
-                    # Alpha 子频段
-                    alpha_1_power = np.mean(psd_data[:, 8:9], axis=1)   # 8-9Hz
-                    alpha_2_power = np.mean(psd_data[:, 9:11], axis=1)  # 9-11Hz
-                    alpha_3_power = np.mean(psd_data[:, 11:13], axis=1) # 11-13Hz
-                    
-                    # Beta 子频段
-                    beta_1_power = np.mean(psd_data[:, 13:20], axis=1)  # 13-20Hz
-                    beta_2_power = np.mean(psd_data[:, 20:30], axis=1)  # 20-30Hz
-                    
-                    # Gamma 子频段
-                    gamma_1_power = np.mean(psd_data[:, 30:50], axis=1) # 30-50Hz
-                    gamma_2_power = np.mean(psd_data[:, 50:70], axis=1) # 50-70Hz
-                    
-                    # 创建图表 - 完整11个频段
-                    fig = go.Figure()
-                    
-                    _band_configs = [
-                        (delta_power, "Delta (1-4Hz)", '#9467bd'),
-                        (theta_power, "Theta (4-8Hz)", '#4363d8'),
-                        (alpha_power, "Alpha (8-13Hz)", '#e74c3c'),
-                        (alpha_1_power, "Alpha₁ (8-9Hz)", '#ff9999'),
-                        (alpha_2_power, "Alpha₂ (9-11Hz)", '#cc6666'),
-                        (alpha_3_power, "Alpha₃ (11-13Hz)", '#993333'),
-                        (beta_power, "Beta (13-30Hz)", '#2ecc71'),
-                        (beta_1_power, "Beta₁ (13-20Hz)", '#90ee90'),
-                        (beta_2_power, "Beta₂ (20-30Hz)", '#228b22'),
-                        (gamma_power, "Gamma (30-70Hz)", '#f39c12'),
-                        (gamma_1_power, "Gamma₁ (30-50Hz)", '#ffd700'),
-                        (gamma_2_power, "Gamma₂ (50-70Hz)", '#ff8c00'),
-                    ]
-                    
-                    for power_data, name, color in _band_configs:
+                if sd.get('delta') is None:
+                    continue
+                fig = go.Figure()
+                for key, name, color in _band_keys:
+                    if name not in selected_bands:
+                        continue
+                    power_data = sd.get(key)
+                    if power_data is None:
+                        continue
+                    fig.add_trace(go.Scatter(
+                        x=epoch_times[:len(power_data)],
+                        y=power_data,
+                        name=name,
+                        mode='lines',
+                        line=dict(color=color, width=1.2)
+                    ))
+                # 添加正常参考值阴影
+                if enable_zscore and all_ref_data:
+                    for key, name, color in _band_keys:
+                        if name not in selected_bands:
+                            continue
+                        normal_mean = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'mean')
+                        normal_std = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'std')
+                        if normal_mean is None or normal_std is None:
+                            continue
+                        upper = normal_mean + zscore_threshold * normal_std
+                        lower = normal_mean - zscore_threshold * normal_std
+                        n_epochs = len(epoch_times)
+                        # hex颜色转 rgba 半透明
+                        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
                         fig.add_trace(go.Scatter(
-                            x=epoch_times[:len(power_data)],
-                            y=power_data,
-                            name=name,
-                            mode='lines',
-                            line=dict(color=color, width=1.2)
+                            x=list(range(n_epochs)) + list(range(n_epochs))[::-1],
+                            y=[upper] * n_epochs + [lower] * n_epochs,
+                            fill='toself',
+                            fillcolor=f'rgba({r},{g},{b},0.1)',
+                            line=dict(color='rgba(0,0,0,0)'),
+                            name=f'{name} 参考',
+                            showlegend=False,
+                            hoverinfo='skip'
                         ))
-                    
-                    fig.update_layout(
-                        title=dict(text=f"<b>{lead}</b> 频段功率分布 (11频段)", x=0.5),
-                        xaxis_title="Epoch",
-                        yaxis_title="功率 (dB/Hz)",
-                        height=500,
-                        legend=dict(x=1.02, y=1, bgcolor='rgba(255,255,255,0.9)', font=dict(size=10)),
-                        margin=dict(r=150)
-                    )
-                    st.plotly_chart(fig, width="stretch")
+                fig.update_layout(
+                    title=dict(text=f"<b>{lead}</b> 频段功率分布", x=0.5),
+                    xaxis_title="Epoch",
+                    yaxis_title="功率 (μV²/Hz)",
+                    height=500,
+                    legend=dict(x=1.02, y=1, bgcolor='rgba(255,255,255,0.9)', font=dict(size=10)),
+                    margin=dict(r=150)
+                )
+                st.plotly_chart(fig, width="stretch")
         
         with tab2:
             st.subheader("📈 功率比率指标")
