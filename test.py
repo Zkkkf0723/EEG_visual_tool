@@ -385,11 +385,21 @@ def main():
                             filtered.append(lead)
             return filtered if filtered else leads
         
-        # 根据脑区更新可选导联和默认选择
+        # 根据脑区更新可选导联
         filtered_lead_options = filter_leads_by_hemisphere(lead_options, hemisphere)
         
-        # 设置默认选中项
-        if hemisphere == "左脑 (L)":
+        # 一键全选按钮
+        col_btn1, col_btn2 = st.columns([1, 3])
+        with col_btn1:
+            select_all_btn = st.button(f"✅ 全选{hemisphere.split()[0]}导联", key="select_all_btn")
+        with col_btn2:
+            if select_all_btn:
+                st.success(f"已选中全部 {len(filtered_lead_options)} 个{hemisphere}导联")
+        
+        # 设置默认选中项（点击全选按钮时默认为空，由按钮控制）
+        if select_all_btn:
+            default_for_hemi = list(filtered_lead_options)  # 全部选中
+        elif hemisphere == "左脑 (L)":
             default_for_hemi = [l for l in ['Fp1-A1', 'F3-A1', 'Fp1-F3', 'F3-C3', 'Fp1-AVG', 'F3-AVG'] if l in filtered_lead_options][:2]
         elif hemisphere == "右脑 (R)":
             default_for_hemi = [l for l in ['Fp2-A2', 'F4-A2', 'Fp2-F4', 'F4-C4', 'Fp2-AVG', 'F4-AVG'] if l in filtered_lead_options][:2]
