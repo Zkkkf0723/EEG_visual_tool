@@ -335,7 +335,68 @@ def main():
             lead_options = bipolar_leads
             default_leads = ['Fp1-F3', 'F3-C3']
         
-        selected_leads = st.multiselect("选择导联", lead_options, default=default_leads, key="selected_leads")
+        # 大脑半球快速选择 (L/R/全脑)
+        col_hemi1, col_hemi2 = st.columns([2, 3])
+        with col_hemi1:
+            hemisphere = st.radio(
+                "🧠 选择脑区",
+                ["全脑", "左脑 (L)", "右脑 (R)"],
+                horizontal=True,
+                key="hemisphere_select"
+            )
+        with col_hemi2:
+            if hemisphere == "左脑 (L)":
+                st.info("💡 左脑导联: Fp1, F3, C3, P3, O1, F7, T3, T5 等")
+            elif hemisphere == "右脑 (R)":
+                st.info("💡 右脑导联: Fp2, F4, C4, P4, O2, F8, T4, T6 等")
+            else:
+                st.info("💡 全脑: 显示所有可用导联")
+        
+        # 根据脑区筛选导联
+        def filter_leads_by_hemisphere(leads, hemi):
+            """
+            根据脑区筛选导联
+            左脑(L): 包含 1, 3, 5, 7 或 -A1 的导联 + 中线导联
+            右脑(R): 包含 2, 4, 6, 8 或 -A2 的导联 + 中线导联
+            全脑: 所有导联
+            """
+            if hemi == "全脑":
+                return leads
+            
+            filtered = []
+            for lead in leads:
+                lead_upper = lead.upper()
+                # 中线导联始终显示 (Fz, Cz, Pz, Oz等)
+                if any(mid in lead_upper for mid in ['Z-', '-PZ', '-CZ', '-OZ', '-FZ']):
+                    filtered.append(lead)
+                elif hemi == "左脑 (L)":
+                    # 左脑: 奇数(1,3,5,7) 或 A1 参考
+                    if any(suffix in lead_upper for suffix in ['-A1', '1-', '1-A', 'F7', 'T3', 'T5', 'O1']):
+                        filtered.append(lead)
+                    elif any(f"{i}" in lead_upper.replace('Fp1','').replace('FP1','') for i in ['1', '3', '5', '7'] if len(lead)>3):
+                        if not any(r in lead_upper for r in ['2', '4', '6', '8', '-A2']):
+                            filtered.append(lead)
+                elif hemi == "右脑 (R)":
+                    # 右脑: 偶数(2,4,6,8) 或 A2 参考
+                    if any(suffix in lead_upper for suffix in ['-A2', '2-', '2-A', 'F8', 'T4', 'T6', 'O2']):
+                        filtered.append(lead)
+                    elif not any(l in lead_upper for l in ['1', '3', '5', '7', '-A1']):
+                        if any(f"{i}" in lead_upper for i in ['2', '4', '6', '8']):
+                            filtered.append(lead)
+            return filtered if filtered else leads
+        
+        # 根据脑区更新可选导联和默认选择
+        filtered_lead_options = filter_leads_by_hemisphere(lead_options, hemisphere)
+        
+        # 设置默认选中项
+        if hemisphere == "左脑 (L)":
+            default_for_hemi = [l for l in ['Fp1-A1', 'F3-A1', 'Fp1-F3', 'F3-C3', 'Fp1-AVG', 'F3-AVG'] if l in filtered_lead_options][:2]
+        elif hemisphere == "右脑 (R)":
+            default_for_hemi = [l for l in ['Fp2-A2', 'F4-A2', 'Fp2-F4', 'F4-C4', 'Fp2-AVG', 'F4-AVG'] if l in filtered_lead_options][:2]
+        else:
+            default_for_hemi = default_leads
+        
+        selected_leads = st.multiselect("选择导联", filtered_lead_options, default=default_for_hemi, key="selected_leads")
         
         st.divider()
         
