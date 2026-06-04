@@ -349,23 +349,10 @@ def main():
         left_leads = [l for l in lead_options if _is_left_lead(l)]
         right_leads = [l for l in lead_options if _is_right_lead(l)]
         
-        # 在 multiselect 选项中添加 L/R/全脑 快捷组
-        lead_options_with_groups = ["🧠 全脑（全部导联）", "🧠 左脑 (L)", "🧠 右脑 (R)"] + lead_options
+        # 在 multiselect 选项中添加 L/R/全脑 快捷组（作为虚拟导联，表示该组均值）
+        lead_options_with_groups = ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"] + lead_options
         
-        selected_leads_raw = st.multiselect("选择导联", lead_options_with_groups, default=default_leads, key="selected_leads")
-        
-        # 展开快捷组选项为实际导联列表
-        selected_leads = []
-        for item in selected_leads_raw:
-            if item == "🧠 全脑（全部导联）":
-                selected_leads.extend(lead_options)
-            elif item == "🧠 左脑 (L)":
-                selected_leads.extend(left_leads)
-            elif item == "🧠 右脑 (R)":
-                selected_leads.extend(right_leads)
-            else:
-                selected_leads.append(item)
-        selected_leads = list(dict.fromkeys(selected_leads))  # 去重保序
+        selected_leads = st.multiselect("选择导联", lead_options_with_groups, default=default_leads, key="selected_leads")
         
         st.divider()
         
@@ -604,11 +591,38 @@ def main():
         all_ref_data = results.get('all_ref_data')
         freqs = results.get('freqs')  # 获取频率轴数据
         
-        valid_leads = [l for l in selected_leads if l in spec_dict_all]
+        valid_leads = [l for l in selected_leads if l in spec_dict_all or l in ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]]
         
         if not valid_leads:
             st.warning("⚠️ 选中的导联无有效数据，请重新选择")
             return
+        
+        # 为虚拟组导联（全脑/左脑/右脑）计算组内均值
+        _group_virtual = {
+            "🧠 全脑 (均值)": lead_options,
+            "🧠 左脑 L (均值)": left_leads,
+            "🧠 右脑 R (均值)": right_leads,
+        }
+        for virt_name, group_leads in _group_virtual.items():
+            if virt_name not in valid_leads:
+                continue
+            group_leads_in_data = [l for l in group_leads if l in spec_dict_all]
+            if not group_leads_in_data:
+                continue
+            # 聚合 spec_dict_all 中该组所有导联的数据
+            virt_data = {}
+            sample_keys = spec_dict_all[group_leads_in_data[0]].keys()
+            for k in sample_keys:
+                arrays = []
+                for l in group_leads_in_data:
+                    v = spec_dict_all[l].get(k)
+                    if v is not None and isinstance(v, (np.ndarray, list)):
+                        arrays.append(np.array(v))
+                if arrays:
+                    min_len = min(len(a) for a in arrays)
+                    stacked = np.array([a[:min_len] for a in arrays])
+                    virt_data[k] = np.mean(stacked, axis=0)
+            spec_dict_all[virt_name] = virt_data
         
         tab1, tab2, tab3 = st.tabs(["📊 频段功率", "📈 功率比率", "📋 统计汇总"])
         
