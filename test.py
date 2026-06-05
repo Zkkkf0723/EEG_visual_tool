@@ -597,6 +597,9 @@ def main():
             st.warning("⚠️ 选中的导联无有效数据，请重新选择")
             return
         
+        # 虚拟组导联名称集合（这些导联在正常参考数据中无对应条目）
+        _VIRTUAL_LEADS = {"🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"}
+        
         # 为虚拟组导联（全脑/左脑/右脑）计算组内均值
         _group_virtual = {
             "🧠 全脑 (均值)": lead_options,
@@ -676,8 +679,8 @@ def main():
                         mode='lines',
                         line=dict(color=color, width=1.2)
                     ))
-                # 添加正常参考值阴影
-                if enable_zscore and all_ref_data:
+                # 添加正常参考值阴影（仅真实导联有参考数据）
+                if enable_zscore and all_ref_data and lead not in _VIRTUAL_LEADS:
                     for key, name, color in _band_keys:
                         if name not in selected_bands:
                             continue
@@ -746,8 +749,8 @@ def main():
                         upper = None
                         lower = None
                         
-                        # 添加参考范围
-                        if enable_zscore and all_ref_data:
+                        # 添加参考范围（仅真实导联有参考数据）
+                        if enable_zscore and all_ref_data and lead not in _VIRTUAL_LEADS:
                             normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'mean')
                             normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'std')
                             
@@ -820,18 +823,22 @@ def main():
                 for lead in valid_leads:
                     sd = spec_dict_all[lead]
                     row = {"导联": lead}
+                    is_virtual = lead in _VIRTUAL_LEADS
                     for band in ["TBR", "DAR", "DTR", "ABR", "ATR", "DTAR"]:
-                        band_key_map = {"DTAR": "DT_AR"}
-                        band_key = band_key_map.get(band, band)
-                        band_data = sd.get(band_key, [])
-                        val = np.mean(band_data) if len(band_data) > 0 else 0
-                        mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                        std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
-                        if mean is not None and std is not None and std > 0:
-                            z = (val - mean) / std
-                            row[band] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                        if is_virtual:
+                            row[band] = "—"
                         else:
-                            row[band] = "N/A"
+                            band_key_map = {"DTAR": "DT_AR"}
+                            band_key = band_key_map.get(band, band)
+                            band_data = sd.get(band_key, [])
+                            val = np.mean(band_data) if len(band_data) > 0 else 0
+                            mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
+                            std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
+                            if mean is not None and std is not None and std > 0:
+                                z = (val - mean) / std
+                                row[band] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                            else:
+                                row[band] = "N/A"
                     summary_data.append(row)
                 
                 # 显示汇总表格
@@ -867,35 +874,41 @@ def main():
                         ("DTAR", np.mean(sd['DT_AR']) if 'DT_AR' in sd and len(sd['DT_AR']) > 0 else 0, "DTAR")
                     ]
                     
-                    # 计算Z-score
+                    # 计算Z-score（仅真实导联有参考数据）
                     metrics_with_z = []
                     for name, val, band in metrics_data:
                         z = None
-                        if enable_zscore and all_ref_data:
+                        if enable_zscore and all_ref_data and lead not in _VIRTUAL_LEADS:
                             mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
                             std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
                             if mean is not None and std is not None and std > 0:
                                 z = (val - mean) / std
+                        if lead in _VIRTUAL_LEADS:
+                            z = "—"  # 虚拟导联无参考数据，标记为特殊值
                         metrics_with_z.append((name, val, z))
                     
                     # 显示指标卡片
                     cols = st.columns(4)
                     for idx, (name, val, z) in enumerate(metrics_with_z[:4]):
                         with cols[idx]:
-                            if z is not None:
+                            if z is None:
+                                st.metric(name, f"{val:.2f}")
+                            elif z == "—":
+                                st.metric(name, f"{val:.2f}", "🧠 均值")
+                            else:
                                 icon = "🔴" if abs(z) > zscore_threshold else "🟢"
                                 st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}")
-                            else:
-                                st.metric(name, f"{val:.2f}")
                     
                     cols2 = st.columns(3)
                     for idx, (name, val, z) in enumerate(metrics_with_z[4:]):
                         with cols2[idx]:
-                            if z is not None:
+                            if z is None:
+                                st.metric(name, f"{val:.2f}")
+                            elif z == "—":
+                                st.metric(name, f"{val:.2f}", "🧠 均值")
+                            else:
                                 icon = "🔴" if abs(z) > zscore_threshold else "🟢"
                                 st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}")
-                            else:
-                                st.metric(name, f"{val:.2f}")
                     
                     # Z-score 可视化
                     if zscore_viz_options:
