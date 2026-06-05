@@ -827,9 +827,23 @@ def main():
                         for band in ["TBR", "DAR", "DTR", "ABR", "ATR", "DTAR"]:
                             band_key_map = {"DTAR": "DT_AR"}
                             band_key = band_key_map.get(band, band)
-                            mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                            std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
-                            if mean_val is not None:
+                            if lead not in _VIRTUAL_LEADS:
+                                mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
+                                std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
+                            else:
+                                group_leads_for_ref = _group_virtual.get(lead, [])
+                                g_means = []
+                                g_stds = []
+                                for gl in group_leads_for_ref:
+                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
+                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
+                                    if rm is not None:
+                                        g_means.append(rm)
+                                    if rs is not None:
+                                        g_stds.append(rs)
+                                mean_val = np.mean(g_means) if g_means else None
+                                std_val = np.mean(g_stds) if g_stds else None
+                            if mean_val is not None and std_val is not None:
                                 ref_df_data.append({
                                     "导联": lead,
                                     "指标": band,
