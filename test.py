@@ -875,7 +875,8 @@ def main():
                             row[band] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
                         else:
                             row[band] = "N/A"
-                    
+                    summary_data.append(row)
+                
                 # 显示汇总表格
                 st.markdown("#### 📈 Z-score 汇总表")
                 summary_df = pd.DataFrame(summary_data)
