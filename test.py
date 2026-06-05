@@ -855,31 +855,27 @@ def main():
                         band_key = band_key_map.get(band, band)
                         band_data = sd.get(band_key, [])
                         val = np.mean(band_data) if len(band_data) > 0 else 0
-                        if enable_zscore and all_ref_data:
-                            if lead not in _VIRTUAL_LEADS:
-                                ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                                ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
-                            else:
-                                group_leads_for_ref = _group_virtual.get(lead, [])
-                                group_means = []
-                                group_stds = []
-                                for gl in group_leads_for_ref:
-                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
-                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
-                                    if rm is not None and rs is not None and rs > 0:
-                                        group_means.append(rm)
-                                        group_stds.append(rs)
-                                ref_mean = np.mean(group_means) if group_means else None
-                                ref_std = np.mean(group_stds) if group_stds else None
-                            if ref_mean is not None and ref_std is not None and ref_std > 0:
-                                z = (val - ref_mean) / ref_std
-                                tag = " 🧠" if lead in _VIRTUAL_LEADS else ""
-                                row[band] = f"{z:.2f}{tag}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}{tag}"
-                            else:
-                                row[band] = "N/A"
+                        if lead not in _VIRTUAL_LEADS:
+                            ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
+                            ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
                         else:
-                            row[band] = f"{val:.2f}"
-                
+                            group_leads_for_ref = _group_virtual.get(lead, [])
+                            group_means = []
+                            group_stds = []
+                            for gl in group_leads_for_ref:
+                                rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
+                                rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
+                                if rm is not None and rs is not None and rs > 0:
+                                    group_means.append(rm)
+                                    group_stds.append(rs)
+                            ref_mean = np.mean(group_means) if group_means else None
+                            ref_std = np.mean(group_stds) if group_stds else None
+                        if ref_mean is not None and ref_std is not None and ref_std > 0:
+                            z = (val - ref_mean) / ref_std
+                            row[band] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                        else:
+                            row[band] = "N/A"
+                    
                 # 显示汇总表格
                 st.markdown("#### 📈 Z-score 汇总表")
                 summary_df = pd.DataFrame(summary_data)
@@ -919,13 +915,11 @@ def main():
                         z = None
                         if enable_zscore and all_ref_data:
                             if lead not in _VIRTUAL_LEADS:
-                                # 真实导联：直接查参考值
                                 ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
                                 ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
                                 if ref_mean is not None and ref_std is not None and ref_std > 0:
                                     z = (val - ref_mean) / ref_std
                             else:
-                                # 虚拟组导联：聚合组内各导联的参考值
                                 group_leads_for_ref = _group_virtual.get(lead, [])
                                 group_means = []
                                 group_stds = []
@@ -950,8 +944,7 @@ def main():
                                 st.metric(name, f"{val:.2f}")
                             else:
                                 icon = "🔴" if abs(z) > zscore_threshold else "🟢"
-                                tag = " 🧠" if lead in _VIRTUAL_LEADS else ""
-                                st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}{tag}")
+                                st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}")
                     
                     cols2 = st.columns(3)
                     for idx, (name, val, z) in enumerate(metrics_with_z[4:]):
@@ -960,8 +953,7 @@ def main():
                                 st.metric(name, f"{val:.2f}")
                             else:
                                 icon = "🔴" if abs(z) > zscore_threshold else "🟢"
-                                tag = " 🧠" if lead in _VIRTUAL_LEADS else ""
-                                st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}{tag}")
+                                st.metric(name, f"{val:.2f}", f"Z={z:.2f} {icon}")
                     
                     # Z-score 可视化
                     if zscore_viz_options:
