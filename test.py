@@ -916,7 +916,7 @@ def main():
                         
                         # 柱状图
                         if "📊 柱状图" in zscore_viz_options:
-                            valid_zscores = [(n.split(" ")[0], z) for n, v, z in metrics_with_z if z is not None]
+                            valid_zscores = [(n.split(" ")[0], z) for n, v, z in metrics_with_z if isinstance(z, (int, float))]
                             if valid_zscores:
                                 names = [n for n, z in valid_zscores]
                                 zscores = [z for n, z in valid_zscores]
@@ -957,7 +957,7 @@ def main():
                         
                         # 雷达图
                         if "🕸️ 雷达图" in zscore_viz_options:
-                            valid_zscores = [(n.split(" ")[0], z) for n, v, z in metrics_with_z if z is not None]
+                            valid_zscores = [(n.split(" ")[0], z) for n, v, z in metrics_with_z if isinstance(z, (int, float))]
                             if len(valid_zscores) >= 3:
                                 labels = [n for n, z in valid_zscores]
                                 values = [z for n, z in valid_zscores]
