@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import pandas as pd
+from io import BytesIO
 from scipy import signal
 from a_montage_tools import *
 from a_psd_stat_tool import *
@@ -15,8 +16,6 @@ from a_psd_stat_tool import *
 def normalize_electrode_name(name):
     """
     标准化电极名称大小写
-    例如: "FP1" -> "Fp1", "fp2" -> "Fp2", "FPZ" -> "Fpz", "FZ" -> "Fz"
-    遵循 10-20 系统命名规范：额极(Fp)的p小写，中线(z)的z小写
     """
     if not name:
         return name
@@ -450,26 +449,16 @@ def main():
                     if norm_name != ch_name:
                         all_data_normalized[norm_name] = ch_data
                 
-                # 5. 根据导联类型计算数据
+                # 5. 计算完整 montage（始终获取全部三种导联类型）
+                status.update(label="🔗 计算导联数据...")
+                full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
+                # 过滤当前选中类型用于显示
                 if "耳电极" in lead_type:
-                    status.update(label="👂 计算耳电极参考...")
-                    ear_format_channels = [ch for ch in all_data.keys()
-                                           if ch.upper().endswith('-A1') or ch.upper().endswith('-A2')]
-                    if len(ear_format_channels) > 0:
-                        leads_montage_dict = {}
-                        for ch_name in ear_format_channels:
-                            data = butter_bandpass_filter(all_data[ch_name], 0.5, 70, fs=256)
-                            leads_montage_dict[ch_name] = norch_50(np.array(data))
-                    else:
-                        full_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
-                        leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
+                    leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
                 elif "平均" in lead_type:
-                    status.update(label="📊 计算平均参考...")
-                    full_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
-                    leads_montage_dict = {k: v for k, v in full_dict.items() if k.endswith('-AVG')}
+                    leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-AVG')}
                 else:
-                    status.update(label="🔗 计算双极导联...")
-                    leads_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
+                    leads_montage_dict = {k: v for k, v in full_montage_dict.items() if '-A1' not in k and '-A2' not in k and '-AVG' not in k}
                 
                 # 6. 计算PSD（保持原有的epoch计算逻辑）
                 status.update(label="📊 计算PSD...")
@@ -562,13 +551,21 @@ def main():
                             **lead_features  # 所有计算指标
                         }
                 
-                # 8. 存储结果
+                # 8. 存储结果（包含原始montage数据供导出使用）
                 st.session_state.psd_results = {
                     'spec_dict_all': spec_dict_all,
                     'epoch_times': epoch_times,
                     'leads_list': leads_list,
                     'all_ref_data': all_ref_data,
-                    'freqs': freqs,  # 保存频率轴数据
+                    'freqs': freqs,
+                    'full_montage_dict': full_montage_dict,
+                    'epoch_count': epoch_count,
+                    'fs': fs,
+                    'nperseg_len': nperseg_len,
+                    'art_threshold': art_threshold,
+                    'prob_dict': prob_dict,
+                    'duration_sec': edf_data['duration_sec'],
+                    'sfreq_val': edf_data['sfreq'],
                     'analysis_params': current_params.copy()
                 }
                 
@@ -589,6 +586,8 @@ def main():
         spec_dict_all = results['spec_dict_all']
         epoch_times = results['epoch_times']
         all_ref_data = results.get('all_ref_data')
+        if enable_zscore and not all_ref_data:
+            all_ref_data = load_normal_reference_data(None)
         freqs = results.get('freqs')  # 获取频率轴数据
         
         valid_leads = [l for l in selected_leads if l in spec_dict_all or l in ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]]
@@ -647,18 +646,18 @@ def main():
             )
             
             _band_keys = [
-                ('delta',   "Delta (1-4Hz)",   '#9467bd'),
-                ('theta',   "Theta (4-8Hz)",   '#4363d8'),
-                ('alpha',   "Alpha (8-13Hz)",  '#e74c3c'),
-                ('alpha_1', "Alpha₁ (8-9Hz)",  '#ff9999'),
-                ('alpha_2', "Alpha₂ (9-11Hz)", '#cc6666'),
-                ('alpha_3', "Alpha₃ (11-13Hz)",'#993333'),
-                ('beta',    "Beta (13-30Hz)",  '#2ecc71'),
-                ('beta_1',  "Beta₁ (13-20Hz)", '#90ee90'),
-                ('beta_2',  "Beta₂ (20-30Hz)", '#228b22'),
-                ('gamma',   "Gamma (30-70Hz)", '#f39c12'),
-                ('gamma_1', "Gamma₁ (30-50Hz)",'#ffd700'),
-                ('gamma_2', "Gamma₂ (50-70Hz)",'#ff8c00'),
+                ('delta',   "Delta (1-4Hz)",   '#e74c3c'),
+                ('theta',   "Theta (4-8Hz)",   '#f1c40f'),
+                ('alpha',   "Alpha (8-13Hz)",  '#27ae60'),
+                ('alpha_1', "Alpha₁ (8-9Hz)",  '#58d68d'),
+                ('alpha_2', "Alpha₂ (9-11Hz)", '#1e8449'),
+                ('alpha_3', "Alpha₃ (11-13Hz)",'#0e6655'),
+                ('beta',    "Beta (13-30Hz)",  '#3498db'),
+                ('beta_1',  "Beta₁ (13-20Hz)", '#85c1e9'),
+                ('beta_2',  "Beta₂ (20-30Hz)", '#2471a3'),
+                ('gamma',   "Gamma (30-70Hz)", '#9b59b6'),
+                ('gamma_1', "Gamma₁ (30-50Hz)",'#c39bd3'),
+                ('gamma_2', "Gamma₂ (50-70Hz)",'#7d3c98'),
             ]
 
             for lead in valid_leads:
@@ -1029,7 +1028,7 @@ def main():
                                 fig_radar.update_layout(title=dict(text=f"{lead} 雷达图", x=0.5), height=300)
                                 st.plotly_chart(fig_radar, width="stretch")
             
-            # ========== 4. Alpha 不对称指数（单独区域）==========
+            # ========== 4. Alpha \u4e0d\u5bf9\u79f0\u6307\u6570\uff08\u5355\u72ec\u533a\u57df\uff09==========
             st.divider()
             st.subheader("🧠 Alpha 不对称指数")
             
@@ -1095,11 +1094,221 @@ def main():
                             height=250
                         )
                         st.plotly_chart(fig_asym, width="stretch")
-    
-    elif edf_file is None:
-        st.info("👈 请上传EEG文件")
-    elif not need_compute:
-        st.info("👈 设置参数")
+            
+             # ========== 导出 Excel（三种导联类型、含频段Z-score、诊断表）==========
+            st.divider()
+            st.subheader("📥 导出数据")
+            
+            def _compute_psd_for_leads(montage_dict, lead_filter_fn, ec, fs_val, np_len, art_th, prob):
+                """为指定导联计算PSD并返回spec_dict"""
+                flt_leads = {k: v for k, v in montage_dict.items() if lead_filter_fn(k)}
+                if not flt_leads:
+                    return {}, []
+                leads_list_local = []
+                all_psds_local = []
+                for lead_name, one_signal in flt_leads.items():
+                    total_samples = ec * epoch_len_sec * fs_val
+                    if len(one_signal) < total_samples:
+                        one_signal = np.pad(one_signal, (0, total_samples - len(one_signal)), 'constant')
+                    one_signal_reshape = one_signal[:total_samples].reshape(ec, epoch_len_sec * fs_val)
+                    freqs_raw, psds_raw = signal.welch(one_signal_reshape, fs=fs_val, window='hann', nperseg=fs_val * np_len)
+                    freqs_grid = np.arange(0, fs_val // 2 + 1)
+                    psds_i = np.zeros((psds_raw.shape[0], len(freqs_grid)))
+                    for i in range(psds_raw.shape[0]):
+                        psds_i[i, :] = np.interp(freqs_grid, freqs_raw, psds_raw[i, :])
+                    if prob is not None and lead_name in prob:
+                        _prob = prob[lead_name]
+                        if ec * epoch_len_sec != np.shape(_prob)[0] * 2:
+                            _prob = np.pad(_prob, ((0, 1), (0, 0)), mode='constant', constant_values=0)
+                        art_prob_index = _prob[:, 2] + _prob[:, 1]
+                        prob_len = ec * epoch_len_sec * 2
+                        if prob_len <= len(art_prob_index):
+                            mean_art_prob = np.max(art_prob_index[:prob_len].reshape(ec, epoch_len_sec * 2), axis=1)
+                        else:
+                            mean_art_prob = np.max(art_prob_index, axis=0) * np.ones(ec)
+                        psds_i_clean = psds_i[mean_art_prob < art_th, :]
+                    else:
+                        psds_i_clean = psds_i
+                    if len(psds_i_clean) > 0:
+                        leads_list_local.append(lead_name)
+                        all_psds_local.append(psds_i_clean)
+                if not all_psds_local:
+                    return {}, leads_list_local
+                spec_dict_local = get_spec_stat_info(all_psds_local)
+                result = {}
+                for idx, ln in enumerate(leads_list_local):
+                    feat = {}
+                    for k, v in spec_dict_local.items():
+                        if isinstance(v, list) and idx < len(v):
+                            feat[k] = v[idx]
+                        elif isinstance(v, np.ndarray) and len(v.shape) > 1 and idx < v.shape[0]:
+                            feat[k] = v[idx]
+                    result[ln] = {'psd': all_psds_local[idx], 'psd_db': 10 * np.log10(all_psds_local[idx]), **feat}
+                return result, leads_list_local
+            
+            def _zscore_for_lead(lead, band_key, val, _ard, _age, _virt_leads, _grp_virtual):
+                """计算单个Z-score，返回 (z_value, ref_mean, ref_std)"""
+                if lead not in _virt_leads:
+                    rm = get_normal_ref(_ard, _age, band_key, lead, 'mean')
+                    rs = get_normal_ref(_ard, _age, band_key, lead, 'std')
+                else:
+                    gl_list = _grp_virtual.get(lead, [])
+                    g_means, g_stds = [], []
+                    for gl in gl_list:
+                        r1 = get_normal_ref(_ard, _age, band_key, gl, 'mean')
+                        r2 = get_normal_ref(_ard, _age, band_key, gl, 'std')
+                        if r1 is not None: g_means.append(r1)
+                        if r2 is not None: g_stds.append(r2)
+                    rm = np.mean(g_means) if g_means else None
+                    rs = np.mean(g_stds) if g_stds else None
+                if rm is not None and rs is not None and rs > 0 and val is not None:
+                    return (val - rm) / rs, rm, rs
+                return None, rm, rs
+            
+            def _build_export_spec(montage_dict, type_label, lead_opts, left_l, right_l, ec, fs_val, np_len, art_th, prob):
+                """为一种导联类型构建 spec_dict 和虚拟组"""
+                def _flt(name):
+                    if "耳电极" in type_label:
+                        return name.endswith('-A1') or name.endswith('-A2')
+                    elif "平均" in type_label:
+                        return name.endswith('-AVG')
+                    else:
+                        return '-A1' not in name and '-A2' not in name and '-AVG' not in name
+                sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob)
+                grp_v = {
+                    "🧠 全脑 (均值)": lead_opts,
+                    "🧠 左脑 L (均值)": left_l,
+                    "🧠 右脑 R (均值)": right_l,
+                }
+                for vn, gl in grp_v.items():
+                    gli = [l for l in gl if l in sd]
+                    if not gli:
+                        continue
+                    vd = {}
+                    for k in sd[gli[0]].keys():
+                        arrs = [np.array(sd[l][k]) for l in gli if sd[l].get(k) is not None]
+                        if arrs:
+                            min_len = min(len(a) for a in arrs)
+                            vd[k] = np.mean(np.array([a[:min_len] for a in arrs]), axis=0)
+                    sd[vn] = vd
+                return sd, grp_v
+            
+            fm_dict = results.get('full_montage_dict')
+            if fm_dict is None:
+                st.warning("⚠️ 缺少完整导联数据，将仅导出当前类型")
+                fm_dict = leads_montage_dict
+            
+            TYPE_CONFIGS = [
+                ("双极导联 (Bipolar)", bipolar_leads,
+                 [l for l in bipolar_leads if _is_left_lead(l)],
+                 [l for l in bipolar_leads if _is_right_lead(l)]),
+                ("耳电极参考 (Ear)", ear_leads,
+                 [l for l in ear_leads if _is_left_lead(l)],
+                 [l for l in ear_leads if _is_right_lead(l)]),
+                ("平均参考 (Average)", avg_leads,
+                 [l for l in avg_leads if _is_left_lead(l)],
+                 [l for l in avg_leads if _is_right_lead(l)]),
+            ]
+            
+            def generate_export_excel(_ez, _ard, _age, _zth, _duration_sec, _sfreq):
+                """生成导出Excel（三种导联类型，含Z-score和诊断）"""
+                buf = BytesIO()
+                band_cols = [
+                    ("delta", "δ (1-4Hz)"), ("theta", "θ (4-8Hz)"),
+                    ("alpha", "α (8-13Hz)"), ("alpha_1", "α₁ (8-9Hz)"),
+                    ("alpha_2", "α₂ (9-11Hz)"), ("alpha_3", "α₃ (11-13Hz)"),
+                    ("beta", "β (13-30Hz)"), ("beta_1", "β₁ (13-20Hz)"),
+                    ("beta_2", "β₂ (20-30Hz)"), ("gamma", "γ (30-70Hz)"),
+                    ("gamma_1", "γ₁ (30-50Hz)"), ("gamma_2", "γ₂ (50-70Hz)"),
+                ]
+                ratio_cols = [
+                    ("TBR", "TBR (θ/β)"), ("DAR", "DAR (δ/α)"),
+                    ("DTR", "DTR (δ/θ)"), ("ABR", "ABR (α/β)"),
+                    ("ATR", "ATR (α/θ)"), ("DT_AR", "DTAR ((δ+θ)/α)"),
+                ]
+                rel_cols = [
+                    ("relative_delta", "相对δ"), ("relative_theta", "相对θ"),
+                    ("relative_alpha", "相对α"), ("relative_beta", "相对β"),
+                    ("relative_gamma", "相对γ"),
+                ]
+                _data_key_to_ref = {"DT_AR": "DTAR"}
+                _VTL = {"🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"}
+                all_rows = []
+                ec = results.get('epoch_count', int(_duration_sec / epoch_len_sec))
+                fs_val = results.get('fs', int(_sfreq))
+                np_len = results.get('nperseg_len', nperseg_len)
+                art_th = results.get('art_threshold', art_threshold)
+                prob = results.get('prob_dict')
+                
+                for type_idx, (type_label, lead_opts, left_l, right_l) in enumerate(TYPE_CONFIGS):
+                    if type_idx > 0:
+                        all_rows.append({})
+                    sd_local, grp_v_local = _build_export_spec(
+                        fm_dict, type_label, lead_opts, left_l, right_l,
+                        ec, fs_val, np_len, art_th, prob
+                    )
+                    exp_leads = lead_opts + ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]
+                    valid_l = [l for l in exp_leads if l in sd_local]
+                    for lead in valid_l:
+                        sd = sd_local[lead]
+                        row = {"导联": lead, "导联类型": type_label}
+                        for key, label in band_cols:
+                            v = sd.get(key)
+                            val = float(np.mean(v)) if v is not None and len(v) > 0 else None
+                            row[label] = f"{val:.4f}" if val is not None else "N/A"
+                            if _ez and _ard:
+                                z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local)
+                                row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
+                            else:
+                                row[f"{label} Z"] = "N/A"
+                        for key, label in ratio_cols:
+                            ref_key = _data_key_to_ref.get(key, key)
+                            v = sd.get(key)
+                            val = float(np.mean(v)) if v is not None and len(v) > 0 else None
+                            row[label] = f"{val:.4f}" if val is not None else "N/A"
+                            if _ez and _ard:
+                                z, rm, rs = _zscore_for_lead(lead, ref_key, val, _ard, _age, _VTL, grp_v_local)
+                                row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
+                            else:
+                                row[f"{label} Z"] = "N/A"
+                        for key, label in rel_cols:
+                            v = sd.get(key)
+                            row[label] = f"{np.mean(v):.4f}" if v is not None and len(v) > 0 else "N/A"
+                        total_v = sd.get("DT_total_R")
+                        row["总功率"] = f"{np.mean(total_v):.4f}" if total_v is not None and len(total_v) > 0 else "N/A"
+                        all_rows.append(row)
+                
+                with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+                    if all_rows:
+                        pd.DataFrame(all_rows).to_excel(writer, sheet_name="频段功率与比率", index=False)
+                    pd.DataFrame({
+                        "参数": ["文件名", "Epoch长度(秒)", "Welch窗口(秒)", "伪迹阈值", "年龄组", "Z-score阈值", "总Epoch数"],
+                        "值": [
+                            edf_file.name, epoch_len_sec, nperseg_len, art_threshold,
+                            _age if _ez else "未启用", _zth if _ez else "未启用", len(epoch_times),
+                        ]
+                    }).to_excel(writer, sheet_name="分析参数", index=False)
+                buf.seek(0)
+                return buf
+            
+            if enable_zscore and not all_ref_data:
+                st.warning("⚠️ 未加载参考数据，无法计算Z-score")
+            
+            if st.button("📥 生成导出文件", type="primary", key="gen_excel_btn"):
+                with st.spinner("正在计算全部三种导联类型（双极/耳电极/平均参考）..."):
+                    excel_buf = generate_export_excel(enable_zscore, all_ref_data, selected_age_group, zscore_threshold, results.get('duration_sec', 0), results.get('sfreq_val', 256))
+                st.session_state.export_buf = excel_buf
+                st.session_state.export_ready = True
+            
+            if st.session_state.get('export_ready') and st.session_state.get('export_buf'):
+                st.download_button(
+                    label="⬇️ 点击下载 Excel",
+                    data=st.session_state.export_buf,
+                    file_name=f"EEG_PSD_{edf_file.name.replace('.edf','').replace('.fif','')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_excel_btn"
+                )
+                st.caption("已生成：包含双极导联、耳电极参考、平均参考共三种导联类型")
 
 if __name__ == "__main__":
     main()
