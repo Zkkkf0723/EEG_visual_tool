@@ -12,6 +12,83 @@ from scipy import signal
 from a_montage_tools import *
 from a_psd_stat_tool import *
 
+# ========== 自包含的伪迹检测模型 (TCN, 改编自 Normal_Reference/base_nn.py) ==========
+# 使用纯 PyTorch 避免 fastai 依赖
+import torch
+import torch.nn as nn
+from torch.nn.utils import weight_norm
+
+class _Chomp1d(nn.Module):
+    def __init__(self, chomp_size):
+        super().__init__()
+        self.chomp_size = chomp_size
+    def forward(self, x):
+        return x[:, :, :-self.chomp_size].contiguous()
+
+class _GAP1d(nn.Module):
+    def __init__(self, output_size=1):
+        super().__init__()
+        self.gap = nn.AdaptiveAvgPool1d(output_size)
+    def forward(self, x):
+        return self.gap(x).view(x.size(0), -1)
+
+class _TemporalBlock(nn.Module):
+    def __init__(self, ni, nf, ks, stride, dilation, padding, dropout=0.):
+        super().__init__()
+        self.conv1 = weight_norm(nn.Conv1d(ni, nf, ks, stride=stride, padding=padding, dilation=dilation))
+        self.chomp1 = _Chomp1d(padding)
+        self.relu1 = nn.ReLU()
+        self.dropout1 = nn.Dropout(dropout)
+        self.conv2 = weight_norm(nn.Conv1d(nf, nf, ks, stride=stride, padding=padding, dilation=dilation))
+        self.chomp2 = _Chomp1d(padding)
+        self.relu2 = nn.ReLU()
+        self.dropout2 = nn.Dropout(dropout)
+        self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
+                                 self.conv2, self.chomp2, self.relu2, self.dropout2)
+        self.downsample = nn.Conv1d(ni, nf, 1) if ni != nf else None
+        self.relu = nn.ReLU()
+        self.init_weights()
+
+    def init_weights(self):
+        self.conv1.weight.data.normal_(0, 0.01)
+        self.conv2.weight.data.normal_(0, 0.01)
+        if self.downsample is not None:
+            self.downsample.weight.data.normal_(0, 0.01)
+
+    def forward(self, x):
+        out = self.net(x)
+        res = x if self.downsample is None else self.downsample(x)
+        return self.relu(out + res)
+
+def _TemporalConvNet(c_in, layers, ks=2, dropout=0.):
+    temp_layers = []
+    for i in range(len(layers)):
+        dilation_size = 2 ** i
+        ni = c_in if i == 0 else layers[i-1]
+        nf = layers[i]
+        temp_layers += [_TemporalBlock(ni, nf, ks, stride=1, dilation=dilation_size,
+                                       padding=(ks-1) * dilation_size, dropout=dropout)]
+    return nn.Sequential(*temp_layers)
+
+class _TCN(nn.Module):
+    def __init__(self, c_in, c_out, layers=8*[25], ks=7, conv_dropout=0., fc_dropout=0.):
+        super().__init__()
+        self.tcn = _TemporalConvNet(c_in, layers, ks=ks, dropout=conv_dropout)
+        self.gap = _GAP1d()
+        self.dropout = nn.Dropout(fc_dropout) if fc_dropout else None
+        self.linear = nn.Linear(layers[-1], c_out)
+        self.init_weights()
+
+    def init_weights(self):
+        self.linear.weight.data.normal_(0, 0.01)
+
+    def forward(self, x):
+        x = self.tcn(x)
+        x = self.gap(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        return self.linear(x)
+
 
 def normalize_electrode_name(name):
     """
@@ -88,6 +165,64 @@ def load_prob_data(prob_bytes: bytes, file_name: str):
     return pickle.loads(prob_bytes)
 
 
+@st.cache_resource(show_spinner="🧠 加载伪迹检测模型...")
+def load_artifact_model():
+    """加载预训练的伪迹检测TCN模型"""
+    model = _TCN(1, 3, layers=5 * [16], ks=7, conv_dropout=0.3, fc_dropout=0.3)
+    model_path = os.path.join(os.path.dirname(__file__),
+                              'Normal_Reference', 'arch', 'tcn_state_20260529_BAA')
+    if not os.path.exists(model_path):
+        st.warning(f"⚠️ 模型文件不存在: {model_path}")
+        return None
+    state_dict = torch.load(model_path, map_location='cpu')
+    model.load_state_dict(state_dict)
+    model.eval()
+    return model
+
+
+def auto_generate_prob_dict(full_montage_dict, fs=256):
+    """自动生成伪迹概率字典 (无需用户上传 .pkl 文件)
+
+    使用预训练的TCN模型对每个导联的信号逐秒预测伪迹概率，
+    输出与 pickle 文件格式完全一致的 prob_dict。
+    """
+    model = load_artifact_model()
+    if model is None:
+        return None
+
+    prob_dict = {}
+    for lead_name, signal_array in full_montage_dict.items():
+        second_len = int(len(signal_array) / fs)
+        if second_len < 2:
+            continue
+
+        # 每1秒一个窗口，加通道维度 → (second_len, 1, 256)
+        lead_x = signal_array[:second_len * fs].reshape(second_len, fs)
+        lead_x = lead_x[:, np.newaxis, :].astype(np.float32)
+
+        # 错位0.5秒再取一次 → 得到0.5秒分辨率
+        lead_x_128 = signal_array[128:second_len * fs - 128].reshape(second_len - 1, fs)
+        lead_x_128 = lead_x_128[:, np.newaxis, :].astype(np.float32)
+
+        with torch.no_grad():
+            x = torch.from_numpy(np.ascontiguousarray(lead_x))
+            prob = model(x)
+            prob = torch.nn.functional.softmax(prob, dim=1).cpu().numpy()
+
+            x2 = torch.from_numpy(np.ascontiguousarray(lead_x_128))
+            prob2 = model(x2)
+            prob2 = torch.nn.functional.softmax(prob2, dim=1).cpu().numpy()
+
+        # 交织得到半秒分辨率 (second_len*2, 3)
+        out_prob_array = np.zeros((second_len * 2, 3))
+        out_prob_array[0::2, :] = prob
+        out_prob_array[1:-1:2, :] = prob2
+
+        prob_dict[lead_name] = out_prob_array
+
+    return prob_dict
+
+
 @st.cache_data(max_entries=1, ttl=3600)
 def load_normal_reference_data(json_dir_hash: str):
     """加载正常参考数据（新版 Normal_Reference 格式）"""
@@ -106,6 +241,9 @@ def load_normal_reference_data(json_dir_hash: str):
     
     if json_path is None:
         st.warning(f"⚠️ 参考数据文件不存在")
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "arch", "tcn_state_20260529_BAA")
+        if not os.path.exists(model_path):
+            st.warning(f"⚠️ 模型文件不存在: {model_path}")
         return None
     
     try:
@@ -288,7 +426,7 @@ def main():
         else:
             edf_file = st.file_uploader("选择FIF文件", type=["fif"], key="edf_uploader")
         
-        prob_file = st.file_uploader("选择Prob文件（可选）", type=["pkl"], key="prob_uploader")
+        prob_file = st.file_uploader("选择Prob文件（可选，不传则自动检测伪迹）", type=["pkl"], key="prob_uploader")
         
         st.divider()
         
@@ -407,11 +545,13 @@ def main():
                     st.error(f"❌ {eeg_format}文件加载失败")
                     return
                 
-                # 2. 加载Prob文件
+                # 2. 加载Prob文件（如有上传则加载，否则稍后自动生成）
                 status.update(label="📋 加载Prob文件...")
                 prob_dict = None
                 if prob_file is not None:
                     prob_dict = load_prob_data(prob_file.getvalue(), prob_file.name)
+                    if prob_dict is not None:
+                        st.info(f"✅ 已加载用户上传的Prob文件 ({prob_file.name})")
                 
                 # 3. 加载正常参考数据
                 status.update(label="📚 加载参考数据...")
@@ -452,6 +592,16 @@ def main():
                 # 5. 计算完整 montage（始终获取全部三种导联类型）
                 status.update(label="🔗 计算导联数据...")
                 full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
+                
+                # 5b. 如果没有上传Prob文件，自动生成伪迹概率
+                if prob_dict is None:
+                    status.update(label="🧠 自动检测伪迹...")
+                    with st.spinner("使用神经网络模型自动检测伪迹..."):
+                        prob_dict = auto_generate_prob_dict(full_montage_dict, int(edf_data['sfreq']))
+                    if prob_dict is not None:
+                        st.info(f"✅ 已自动生成伪迹概率（{len(prob_dict)}个导联）")
+                    else:
+                        st.warning("⚠️ 自动伪迹检测不可用，将不使用伪迹过滤")
                 # 过滤当前选中类型用于显示
                 if "耳电极" in lead_type:
                     leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
