@@ -11,6 +11,7 @@ from io import BytesIO
 from scipy import signal
 from a_montage_tools import *
 from a_psd_stat_tool import *
+from plot_prob_array import plot_probs
 
 # ========== 自包含的伪迹检测模型  ==========
 # 使用纯 PyTorch 避免 fastai 依赖
@@ -1047,6 +1048,17 @@ def main():
                 st.markdown("#### 📈 Z-score 汇总表")
                 summary_df = pd.DataFrame(summary_data)
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
+            
+            # ========== 伪迹概率热力图 ==========
+            prob_dict = results.get('prob_dict')
+            if prob_dict is not None and len(prob_dict) > 0:
+                with st.expander("🎨 伪迹概率热力图", expanded=False):
+                    st.caption("每半秒EEG片段被神经网络分为3类: **BKG(背景脑电)** / **ART(伪迹)** / **ALPHA(α节律)**。颜色越深表示概率越高。")
+                    all_probs = np.stack(list(prob_dict.values()), axis=0)
+                    lead_names = list(prob_dict.keys())
+                    fig = plot_probs(all_probs, lead_names)
+                    st.pyplot(fig)
+                    st.caption(f"共 {len(lead_names)} 个导联 | 每行=1个导联 | 时间分辨率=0.5秒")
             
             # ========== 2. 可视化选项 ==========
             st.divider()
