@@ -433,7 +433,7 @@ def main():
         st.subheader("📊 分析参数")
         epoch_len_sec = st.slider("Epoch长度(秒)", 1, 10, 5, key="epoch_len")
         nperseg_len = st.slider("Welch窗口长度(秒)", 1, 5, 2, key="nperseg")
-        art_threshold = st.slider("伪迹过滤严格度（0=不过滤，越高=越严格）", 0.0, 1.0, 0.0, 0.1, key="art_threshold")
+        art_threshold = st.slider("伪迹过滤阈值", 0.0, 1.0, 0.0, 0.1, key="art_threshold")
         
         st.subheader("🔗 导联选择")
         
