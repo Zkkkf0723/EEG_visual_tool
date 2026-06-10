@@ -66,15 +66,15 @@ def plot_probs(prob_array, lead_names=None):
     for name, ch_list in regions.items():
         reordered_indices.extend(ch_list)
         current_idx += len(ch_list)
-        region_bounds.append((current_idx - len(ch_list), current_idx, name))
+        region_bounds.append((current_idx, name))  # (end_index, name)
 
     reordered_matrix = matrix[reordered_indices, :, :]
 
     # 核心绘图：3个类型纵向展开 (3行1列)
-    fig, axes = plt.subplots(3, 1, figsize=(22, 14), sharex=True)
-    fig.subplots_adjust(hspace=0.25)
+    fig, axes = plt.subplots(3, 1, figsize=(22, 10), sharex=True)
+    fig.subplots_adjust(hspace=0.3)
 
-    class_names = ['BKG (背景脑电)', 'ART (伪迹)', 'ALPHA (α节律)']
+    class_names = ['BKG (Background)', 'ART (Artifact)', 'ALPHA (Alpha)']
     cmaps = ['Reds', 'Blues', 'Greens']
 
     # X轴时间刻度（每5分钟一个刻度）
@@ -89,27 +89,27 @@ def plot_probs(prob_array, lead_names=None):
         im = ax.imshow(plot_data, cmap=cmaps[idx], aspect='auto',
                        vmin=0, vmax=1, extent=[time_axis[0], time_axis[-1], _lead_len, 0])
 
-        # 绘制脑区分界线
-        for start, end, name in region_bounds:
-            if end < _lead_len and len(regions) > 1:
-                ax.axhline(y=end, color='black', linestyle='-', linewidth=1.2, alpha=0.7)
-            ax.text(time_axis[-1] + 0.2, (start + end) / 2, name,
-                    va='center', ha='left', fontsize=11, fontweight='bold', color='dimgray')
+        # 只画分组横线，不显示文字标签
+        for end_pt, name in region_bounds:
+            if end_pt < _lead_len and len(regions) > 1:
+                ax.axhline(y=end_pt, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
 
         if idx == 2:
             ax.set_xticks([x * 0.5 / 60 for x in xticks])
             ax.set_xticklabels(xtick_labels, fontsize=10)
-            ax.set_xlabel("时间 (分钟)", fontsize=13, fontweight='bold', labelpad=8)
+            ax.set_xlabel("Time (minutes)", fontsize=13, fontweight='bold', labelpad=8)
         ax.set_xlim(time_axis[0], time_axis[-1])
-        ax.set_ylabel("通道", fontsize=11)
+        ax.set_ylabel("Channel", fontsize=11)
         ax.set_yticks([])
 
         ax.set_title(class_names[idx], fontsize=14, fontweight='bold', pad=10, loc='left')
 
-        cbar = fig.colorbar(im, ax=ax, orientation='vertical', pad=0.08, shrink=0.85)
-        cbar.set_label('概率', fontsize=10)
+        cbar = fig.colorbar(im, ax=ax, orientation='vertical', pad=0.02, shrink=0.85)
+        cbar.set_label('Probability', fontsize=10)
 
-    fig.suptitle("伪迹概率热力图 (按导联类型分组)", fontsize=16, fontweight='bold', y=0.97)
+    groups_info = ', '.join([f"{n}: {len(ch)}" for n, ch in regions.items()])
+    fig.suptitle(f"Artifact Probability Heatmap ({_lead_len} leads | {groups_info})",
+                 fontsize=15, fontweight='bold', y=0.98)
     fig.tight_layout()
 
     return fig

@@ -1052,13 +1052,13 @@ def main():
             # ========== 伪迹概率热力图 ==========
             prob_dict = results.get('prob_dict')
             if prob_dict is not None and len(prob_dict) > 0:
-                with st.expander("🎨 伪迹概率热力图", expanded=False):
-                    st.caption("每半秒EEG片段被神经网络分为3类: **BKG(背景脑电)** / **ART(伪迹)** / **ALPHA(α节律)**。颜色越深表示概率越高。")
+                with st.expander("🎨 Artifact Probability Heatmap", expanded=False):
+                    st.caption("Each 0.5s EEG segment is classified into 3 categories: **BKG (Background)** / **ART (Artifact)** / **ALPHA (Alpha rhythm)**. Darker color = higher probability.")
                     all_probs = np.stack(list(prob_dict.values()), axis=0)
                     lead_names = list(prob_dict.keys())
                     fig = plot_probs(all_probs, lead_names)
                     st.pyplot(fig)
-                    st.caption(f"共 {len(lead_names)} 个导联 | 每行=1个导联 | 时间分辨率=0.5秒")
+                    st.caption(f"{len(lead_names)} leads | 1 row per lead | 0.5s time resolution")
             
             # ========== 2. 可视化选项 ==========
             st.divider()
