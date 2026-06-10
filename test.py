@@ -12,7 +12,7 @@ from scipy import signal
 from a_montage_tools import *
 from a_psd_stat_tool import *
 
-# ========== 自包含的伪迹检测模型 (TCN, 改编自 Normal_Reference/base_nn.py) ==========
+# ========== 自包含的伪迹检测模型  ==========
 # 使用纯 PyTorch 避免 fastai 依赖
 import torch
 import torch.nn as nn
@@ -452,7 +452,7 @@ def main():
         ]
         bipolar_leads = [
             'Fp1-F3', 'Fp2-F4', 'F3-C3', 'F4-C4', 'C3-P3', 'C4-P4',
-            'P3-O1', 'P4-O2', 'Fp1-F7', 'F7-T3', 'T3-T5', 'T5-O1',
+            'P3-O1', 'P4-O2', 'Fp1-F7', 'Fp2-F8', 'F7-T3', 'T3-T5', 'T5-O1',
             'F8-T4', 'T4-T6', 'T6-O2', 'Fz-Pz', 'Cz-Pz', 'Pz-Oz'
         ]
         avg_leads = [
