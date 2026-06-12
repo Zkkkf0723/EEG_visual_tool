@@ -256,8 +256,15 @@ def load_normal_reference_data(json_dir_hash: str):
         return None
 
 
-def get_normal_ref(all_ref_data, age_group, band, lead, stat_type='mean'):
-    """获取正常参考值（适配新版 Normal_Reference 数据格式）"""
+def get_normal_ref(all_ref_data, age_group, band, lead, stat_type='mean', window_sizes=None):
+    """获取正常参考值（适配新版 Normal_Reference 数据格式）
+
+    Parameters
+    ----------
+    window_sizes : list, optional
+        用户选择的窗口大小列表，用于筛选对应窗口的常模数据。
+        例如 [2, 5, 10]。为 None 或空时不过滤（保留旧行为）。
+    """
     if all_ref_data is None:
         return None
     
@@ -273,56 +280,40 @@ def get_normal_ref(all_ref_data, age_group, band, lead, stat_type='mean'):
         'total': 'age_19_44'
     }
     
-    # 窗口大小映射
-    ws_mapping = {
-        1: '2',   # 窗口1秒用2秒的数据代替
-        2: '2',
-        5: '5',
-        10: '10',
-        15: '15'
-    }
-    
     # 获取年龄组前缀
     age_prefix = age_group_mapping.get(age_group, 'age_19_44')
     
-    # 查找匹配的年龄组 key（根据窗口大小）
-    values = []
+    # 将用户选择的窗口大小转为 set，方便快速查找
+    target_window_sizes = set(window_sizes) if window_sizes else set()
     
     # 新格式 key: age_19_44_10_normal_ref_0526
-    # 遍历所有 key 找匹配的
+    # 年龄前缀有几段（如 age_19_44 → 3段），窗口就在第几段
+    prefix_parts_count = len(age_prefix.split('_'))
+    
+    values = []
     for key in all_ref_data.keys():
-        # 检查是否匹配年龄组
         if not key.startswith(age_prefix):
             continue
-        
-        # 从 key 中提取窗口大小
-        # 格式: age_19_44_10_normal_ref_0526
         parts = key.split('_')
-        if len(parts) >= 3:
+        if len(parts) > prefix_parts_count:
             try:
-                ws_in_key = int(parts[2])
+                ws_in_key = int(parts[prefix_parts_count])
             except:
                 continue
         else:
             continue
-        
-        # 键名格式转换: delta_Fp1-A1 -> Fp1-A1__delta
-        # 需要保持原始大小写，因为JSON中的键名如DT_AR不是全小写的
+        if target_window_sizes and ws_in_key not in target_window_sizes:
+            continue
         band_key = band
-        # 特殊情况处理
         if band == 'DTAR':
             band_key = 'DT_AR'
-        
         new_key = f"{lead}__{band_key}"
-        
         ref_data = all_ref_data[key]
         g_info = ref_data.get('g_info', {})
-        
         if new_key in g_info:
             val = g_info[new_key].get(stat_type)
             if val is not None:
                 values.append(val)
-    
     return np.mean(values) if values else None
 
 
@@ -666,9 +657,11 @@ def main():
                             mean_art_prob = np.max(art_prob_index[:prob_len].reshape(epoch_count, epoch_len_sec * 2), axis=1)
                         else:
                             mean_art_prob = np.max(art_prob_index, axis=0) * np.ones(epoch_count)
-                        psds_without_art = psds[mean_art_prob < (1 - art_threshold), :]
+                        keep_mask = mean_art_prob < (1 - art_threshold)
+                        psds_without_art = psds[keep_mask, :]
                     else:
                         psds_without_art = psds
+                        keep_mask = np.ones(epoch_count, dtype=bool)
                     
                     if len(psds_without_art) > 0:
                         leads_list.append(lead_name)
@@ -838,15 +831,15 @@ def main():
                         if name not in selected_bands:
                             continue
                         if lead not in _VIRTUAL_LEADS:
-                            normal_mean = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'mean')
-                            normal_std = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'std')
+                            normal_mean = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'mean', window_sizes)
+                            normal_std = get_normal_ref(all_ref_data, selected_age_group, key, lead, 'std', window_sizes)
                         else:
                             group_leads_for_ref = _group_virtual.get(lead, [])
                             g_means = []
                             g_stds = []
                             for gl in group_leads_for_ref:
-                                rm = get_normal_ref(all_ref_data, selected_age_group, key, gl, 'mean')
-                                rs = get_normal_ref(all_ref_data, selected_age_group, key, gl, 'std')
+                                rm = get_normal_ref(all_ref_data, selected_age_group, key, gl, 'mean', window_sizes)
+                                rs = get_normal_ref(all_ref_data, selected_age_group, key, gl, 'std', window_sizes)
                                 if rm is not None:
                                     g_means.append(rm)
                                 if rs is not None:
@@ -919,15 +912,15 @@ def main():
                         # 添加参考范围
                         if enable_zscore and all_ref_data:
                             if lead not in _VIRTUAL_LEADS:
-                                normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'mean')
-                                normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'std')
+                                normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'mean', window_sizes)
+                                normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'std', window_sizes)
                             else:
                                 group_leads_for_ref = _group_virtual.get(lead, [])
                                 g_means = []
                                 g_stds = []
                                 for gl in group_leads_for_ref:
-                                    rm = get_normal_ref(all_ref_data, selected_age_group, ratio, gl, 'mean')
-                                    rs = get_normal_ref(all_ref_data, selected_age_group, ratio, gl, 'std')
+                                    rm = get_normal_ref(all_ref_data, selected_age_group, ratio, gl, 'mean', window_sizes)
+                                    rs = get_normal_ref(all_ref_data, selected_age_group, ratio, gl, 'std', window_sizes)
                                     if rm is not None:
                                         g_means.append(rm)
                                     if rs is not None:
@@ -981,15 +974,15 @@ def main():
                             band_key_map = {"DTAR": "DT_AR"}
                             band_key = band_key_map.get(band, band)
                             if lead not in _VIRTUAL_LEADS:
-                                mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                                std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
+                                mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
+                                std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
                             else:
                                 group_leads_for_ref = _group_virtual.get(lead, [])
                                 g_means = []
                                 g_stds = []
                                 for gl in group_leads_for_ref:
-                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
-                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
+                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
+                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
                                     if rm is not None:
                                         g_means.append(rm)
                                     if rs is not None:
@@ -1023,15 +1016,15 @@ def main():
                         band_data = sd.get(band_key, [])
                         val = np.mean(band_data) if len(band_data) > 0 else 0
                         if lead not in _VIRTUAL_LEADS:
-                            ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                            ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
+                            ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
+                            ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
                         else:
                             group_leads_for_ref = _group_virtual.get(lead, [])
                             group_means = []
                             group_stds = []
                             for gl in group_leads_for_ref:
-                                rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
-                                rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
+                                rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
+                                rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
                                 if rm is not None and rs is not None and rs > 0:
                                     group_means.append(rm)
                                     group_stds.append(rs)
@@ -1061,6 +1054,7 @@ def main():
                     st.caption(f"{len(lead_names)} leads | 1 row per lead | 0.5s time resolution")
             
             # ========== 2. 可视化选项 ==========
+            st.divider()
             st.divider()
             st.markdown("#### 📊 可视化选项")
             zscore_viz_options = st.multiselect(
@@ -1094,8 +1088,8 @@ def main():
                         z = None
                         if enable_zscore and all_ref_data:
                             if lead not in _VIRTUAL_LEADS:
-                                ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean')
-                                ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std')
+                                ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
+                                ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
                                 if ref_mean is not None and ref_std is not None and ref_std > 0:
                                     z = (val - ref_mean) / ref_std
                             else:
@@ -1103,8 +1097,8 @@ def main():
                                 group_means = []
                                 group_stds = []
                                 for gl in group_leads_for_ref:
-                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean')
-                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std')
+                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
+                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
                                     if rm is not None and rs is not None and rs > 0:
                                         group_means.append(rm)
                                         group_stds.append(rs)
@@ -1166,8 +1160,8 @@ def main():
                                         
                                         # 添加参考线
                                         if enable_zscore and all_ref_data:
-                                            normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio_name, lead, 'mean')
-                                            normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio_name, lead, 'std')
+                                            normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio_name, lead, 'mean', window_sizes)
+                                            normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio_name, lead, 'std', window_sizes)
                                             if normal_mean is not None:
                                                 fig_ts.add_hline(y=normal_mean, line_dash="solid", line_color="green", annotation_text="正常均值")
                                                 if normal_std is not None and normal_std > 0:
@@ -1314,17 +1308,17 @@ def main():
                     result[ln] = {'psd': all_psds_local[idx], 'psd_db': 10 * np.log10(all_psds_local[idx]), **feat}
                 return result, leads_list_local
             
-            def _zscore_for_lead(lead, band_key, val, _ard, _age, _virt_leads, _grp_virtual):
+            def _zscore_for_lead(lead, band_key, val, _ard, _age, _virt_leads, _grp_virtual, _ws=None):
                 """计算单个Z-score，返回 (z_value, ref_mean, ref_std)"""
                 if lead not in _virt_leads:
-                    rm = get_normal_ref(_ard, _age, band_key, lead, 'mean')
-                    rs = get_normal_ref(_ard, _age, band_key, lead, 'std')
+                    rm = get_normal_ref(_ard, _age, band_key, lead, 'mean', _ws)
+                    rs = get_normal_ref(_ard, _age, band_key, lead, 'std', _ws)
                 else:
                     gl_list = _grp_virtual.get(lead, [])
                     g_means, g_stds = [], []
                     for gl in gl_list:
-                        r1 = get_normal_ref(_ard, _age, band_key, gl, 'mean')
-                        r2 = get_normal_ref(_ard, _age, band_key, gl, 'std')
+                        r1 = get_normal_ref(_ard, _age, band_key, gl, 'mean', _ws)
+                        r2 = get_normal_ref(_ard, _age, band_key, gl, 'std', _ws)
                         if r1 is not None: g_means.append(r1)
                         if r2 is not None: g_stds.append(r2)
                     rm = np.mean(g_means) if g_means else None
@@ -1425,7 +1419,7 @@ def main():
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
                             if _ez and _ard:
-                                z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local)
+                                z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
                                 row[f"{label} Z"] = "N/A"
@@ -1435,7 +1429,7 @@ def main():
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
                             if _ez and _ard:
-                                z, rm, rs = _zscore_for_lead(lead, ref_key, val, _ard, _age, _VTL, grp_v_local)
+                                z, rm, rs = _zscore_for_lead(lead, ref_key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
                                 row[f"{label} Z"] = "N/A"
