@@ -426,6 +426,7 @@ def main():
         epoch_len_sec = st.slider("Epoch长度(秒)", 1, 10, 5, key="epoch_len")
         nperseg_len = st.slider("Welch窗口长度(秒)", 1, 5, 2, key="nperseg")
         art_threshold = st.slider("伪迹过滤阈值", 0.0, 1.0, 0.0, 0.1, key="art_threshold")
+        # art_fallback_mode 不在侧边栏显示，触发时才弹窗确认
         
         st.subheader("🔗 导联选择")
         
@@ -508,6 +509,7 @@ def main():
         'epoch_len_sec': epoch_len_sec,
         'nperseg_len': nperseg_len,
         'art_threshold': art_threshold,
+        'art_fallback_mode': st.session_state.get('art_fallback_mode', '保留原始数据'),
         'selected_leads': tuple(sorted(selected_leads)),
         'enable_zscore': enable_zscore,
         'selected_age_group': selected_age_group,
@@ -523,7 +525,10 @@ def main():
             need_compute = True
     
     # 执行分析
+    # 当用户手动调整参数时，重置导联剔除模式（弹窗将在新的分析条件下重新触发）
     if need_compute and edf_file:
+        st.session_state.pop('_fb_dismissed', None)
+        st.session_state['art_fallback_mode'] = '保留原始数据'
         st.session_state.analysis_params = current_params
         
         with st.status("正在分析数据...", expanded=True) as status:
@@ -620,6 +625,7 @@ def main():
                 spec_dict_all = {}
                 leads_list = []
                 all_psds = []
+                fallback_leads = []  # 记录所有epoch被伪迹过滤剔除的导联
                 
                 # 进度条
                 progress_bar = st.progress(0)
@@ -662,7 +668,14 @@ def main():
                     else:
                         psds_without_art = psds
                         keep_mask = np.ones(epoch_count, dtype=bool)
-                    
+
+                    # ====== 检测并处理"所有epoch被过滤" ======
+                    if len(psds_without_art) == 0 and len(psds) > 0:
+                        fallback_leads.append(lead_name)
+                        _fb_mode = st.session_state.get('art_fallback_mode', '保留原始数据')
+                        if _fb_mode == "剔除该导联":
+                            continue
+
                     if len(psds_without_art) > 0:
                         leads_list.append(lead_name)
                         all_psds.append(psds_without_art)
@@ -711,6 +724,7 @@ def main():
                     'nperseg_len': nperseg_len,
                     'art_threshold': art_threshold,
                     'prob_dict': prob_dict,
+                    'fallback_leads': fallback_leads,
                     'duration_sec': edf_data['duration_sec'],
                     'sfreq_val': edf_data['sfreq'],
                     'analysis_params': current_params.copy()
@@ -1052,7 +1066,44 @@ def main():
                     fig = plot_probs(all_probs, lead_names)
                     st.pyplot(fig)
                     st.caption(f"{len(lead_names)} leads | 1 row per lead | 0.5s time resolution")
-            
+
+            # ========== 导联完全过滤确认弹窗 ==========
+            fallback_leads = results.get('fallback_leads', [])
+            _fb_mode = st.session_state.get('art_fallback_mode', '保留原始数据')
+            _fb_dismissed = st.session_state.get('_fb_dismissed', False)
+
+            # ====== 弹窗：导联完全过滤，让用户选择 ======
+            if fallback_leads and _fb_mode == '保留原始数据' and not _fb_dismissed:
+                st.error(f"⚠️ 伪迹过滤导致 {len(fallback_leads)} 个导联的全部epoch被剔除", icon="🚨")
+                st.markdown(
+                    f"以下导联的所有epoch均因伪迹过滤被剔除：\n\n"
+                    f"\n".join(fallback_leads)
+                )
+                st.caption("请选择处理方式：")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔧 调整阈值重新分析", use_container_width=True):
+                        st.session_state['_fb_dismissed'] = True
+                        st.rerun()
+                with col2:
+                    if st.button("❌ 剔除这些导联", type="primary", use_container_width=True):
+                        st.session_state['art_fallback_mode'] = '剔除该导联'
+                        st.session_state.pop('_fb_dismissed', None)
+                        st.rerun()
+                st.stop()
+
+            # ====== 已剔除：显示提示信息 ======
+            elif fallback_leads and _fb_mode == '剔除该导联':
+                st.info(f"ℹ️ 已从分析中剔除 {len(fallback_leads)} 个导联：{'、'.join(fallback_leads)}")
+
+            # ====== 已关闭弹窗（点击了调整阈值）：结果上方显示引导提示 ======
+            elif fallback_leads and _fb_mode == '保留原始数据' and _fb_dismissed:
+                st.warning(
+                    f"部分导联使用了未过滤的原始PSD（数据可能不准确）\n\n"
+                    f"受影响导联：{'、'.join(fallback_leads)}\n\n"
+                    f"请调整侧边栏「伪迹过滤阈值」滑块后重新分析"
+                )
+
             # ========== 2. 可视化选项 ==========
             st.divider()
             st.divider()
@@ -1258,7 +1309,7 @@ def main():
             st.divider()
             st.subheader("📥 导出数据")
             
-            def _compute_psd_for_leads(montage_dict, lead_filter_fn, ec, fs_val, np_len, art_th, prob):
+            def _compute_psd_for_leads(montage_dict, lead_filter_fn, ec, fs_val, np_len, art_th, prob, fallback_mode="保留原始数据（当前）"):
                 """为指定导联计算PSD并返回spec_dict"""
                 flt_leads = {k: v for k, v in montage_dict.items() if lead_filter_fn(k)}
                 if not flt_leads:
@@ -1288,6 +1339,12 @@ def main():
                         psds_i_clean = psds_i[mean_art_prob < (1 - art_th), :]
                     else:
                         psds_i_clean = psds_i
+                    # 检测并处理"所有epoch被过滤"
+                    if len(psds_i_clean) == 0 and len(psds_i) > 0:
+                        if fallback_mode == "剔除该导联":
+                            continue
+                        else:
+                            psds_i_clean = psds_i
                     if len(psds_i_clean) > 0:
                         leads_list_local.append(lead_name)
                         all_psds_local.append(psds_i_clean)
@@ -1336,7 +1393,7 @@ def main():
                         return name.endswith('-AVG')
                     else:
                         return '-A1' not in name and '-A2' not in name and '-AVG' not in name
-                sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob)
+                sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob, st.session_state.get('art_fallback_mode', '保留原始数据'))
                 grp_v = {
                     "🧠 全脑 (均值)": lead_opts,
                     "🧠 左脑 L (均值)": left_l,
