@@ -1100,7 +1100,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
         }
     elif lead_type == "EBA_RAW":
 
-        low_c = 0.5
+        low_c = 1.5
         high_c = 70
         out_dict = {
             "Fp1-A1": butter_bandpass_filter(lead_dict["Fp1"] - lead_dict["A1"], low_c, high_c, fs=256),

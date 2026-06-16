@@ -626,6 +626,8 @@ def main():
                 leads_list = []
                 all_psds = []
                 fallback_leads = []  # 记录所有epoch被伪迹过滤剔除的导联
+                all_psds_raw_dict = {}  # lead_name -> 全量(过滤前)PSD
+                keep_masks_dict = {}     # lead_name -> epoch保留掩码
                 
                 # 进度条
                 progress_bar = st.progress(0)
@@ -651,6 +653,8 @@ def main():
                     psds = np.zeros((psds_raw.shape[0], len(freqs)))
                     for i in range(psds_raw.shape[0]):
                         psds[i, :] = np.interp(freqs, freqs_raw, psds_raw[i, :])
+                    psds = np.log1p(psds)
+                    all_psds_raw_dict[lead_name] = psds  # 保存全量PSD（过滤前）
 
                     if prob_dict is not None and lead_name in prob_dict:
                         _prob = prob_dict[lead_name]
@@ -668,6 +672,7 @@ def main():
                     else:
                         psds_without_art = psds
                         keep_mask = np.ones(epoch_count, dtype=bool)
+                    keep_masks_dict[lead_name] = keep_mask
 
                     # ====== 检测并处理"所有epoch被过滤" ======
                     if len(psds_without_art) == 0 and len(psds) > 0:
@@ -693,6 +698,13 @@ def main():
                 status.update(label="📈 计算统计指标...")
                 spec_dict = get_spec_stat_info(all_psds)
                 
+                # 计算未过滤的全量PSD统计信息（用于过滤前后对比图）
+                if prob_dict is not None:
+                    all_psds_full = [all_psds_raw_dict[ln] for ln in leads_list]
+                    spec_dict_full = get_spec_stat_info(all_psds_full)
+                else:
+                    spec_dict_full = spec_dict
+                
                 for lead_idx, lead_name in enumerate(leads_list):
                     if lead_idx < len(all_psds):
                         # 保留原始PSD数据 + 所有计算指标
@@ -705,10 +717,24 @@ def main():
                             elif isinstance(v, np.ndarray) and len(v.shape) > 1 and lead_idx < v.shape[0]:
                                 lead_features[k] = v[lead_idx]
                         
+                        # 构建过滤前后对比数据
+                        _full_extra = {}
+                        if prob_dict is not None and lead_name in keep_masks_dict:
+                            for k in lead_features.keys():
+                                if k in spec_dict_full and isinstance(spec_dict_full[k], list) and lead_idx < len(spec_dict_full[k]):
+                                    full_vals = np.array(spec_dict_full[k][lead_idx])  # G_: 全量epoch
+                                    _full_extra[f'{k}_full'] = full_vals
+                                    filt_vals = np.full(len(full_vals), np.nan)  # E_: NaN填充
+                                    mask = keep_masks_dict[lead_name]
+                                    if np.any(mask):
+                                        filt_vals[mask] = lead_features[k]
+                                    _full_extra[f'{k}_filt'] = filt_vals
+                        
                         spec_dict_all[lead_name] = {
                             'psd': all_psds[lead_idx],  # 原始线性功率谱 (epoch×freq)
                             'psd_db': 10 * np.log10(all_psds[lead_idx]),  # dB版本
-                            **lead_features  # 所有计算指标
+                            **lead_features,  # 所有计算指标
+                            **_full_extra  # 过滤前后对比数据
                         }
                 
                 # 8. 存储结果（包含原始montage数据供导出使用）
@@ -820,6 +846,13 @@ def main():
                 ('gamma_1', "Gamma₁ (30-50Hz)",'#c39bd3'),
                 ('gamma_2', "Gamma₂ (50-70Hz)",'#7d3c98'),
             ]
+            
+            show_filter_compare = st.checkbox(
+                "📊 显示伪迹过滤前后对比（G_: 全量, E_: 过滤NaN→0）",
+                value=False,
+                key="show_filter_compare",
+                disabled=(results.get('prob_dict') is None)
+            )
 
             for lead in valid_leads:
                 sd = spec_dict_all[lead]
@@ -839,6 +872,7 @@ def main():
                         mode='lines',
                         line=dict(color=color, width=1.2)
                     ))
+
                 # 添加正常参考值阴影
                 if enable_zscore and all_ref_data:
                     for key, name, color in _band_keys:
@@ -886,7 +920,46 @@ def main():
                     margin=dict(r=150)
                 )
                 st.plotly_chart(fig, width="stretch")
-        
+
+                # ====== 过滤前后对比图（同一张图，两种线型）======
+                if show_filter_compare and results.get('prob_dict') is not None:
+                    _has_full = any(sd.get(f'{k}_full') is not None for k, _, _ in _band_keys)
+                    if _has_full:
+                        cmp_fig = go.Figure()
+                        for key, name, color in _band_keys:
+                            if name not in selected_bands:
+                                continue
+                            g_data = sd.get(f'{key}_full')
+                            e_data = sd.get(f'{key}_filt')
+                            if g_data is None:
+                                continue
+                            # 过滤前: 浅色虚线
+                            cmp_fig.add_trace(go.Scatter(
+                                x=epoch_times, y=g_data,
+                                name=f'{name} 过滤前',
+                                mode='lines',
+                                line=dict(color=color, width=1, dash='dash'),
+                                opacity=0.5
+                            ))
+                            # 过滤后: 深色实线（NaN→0）
+                            if e_data is not None:
+                                e_plot = np.nan_to_num(e_data, nan=0.0)
+                                cmp_fig.add_trace(go.Scatter(
+                                    x=epoch_times, y=e_plot,
+                                    name=f'{name} 过滤后',
+                                    mode='lines',
+                                    line=dict(color=color, width=1.5)
+                                ))
+                        cmp_fig.update_layout(
+                            title=dict(text=f"<b>{lead}</b> 伪迹过滤前后对比", x=0.5),
+                            xaxis_title="Epoch",
+                            yaxis_title="功率 (μV²/Hz)",
+                            height=400,
+                            legend=dict(x=1.02, y=1, font=dict(size=9)),
+                            margin=dict(r=150)
+                        )
+                        st.plotly_chart(cmp_fig, width="stretch")
+
         with tab2:
             st.subheader("📈 功率比率指标")
             
@@ -1326,6 +1399,7 @@ def main():
                     psds_i = np.zeros((psds_raw.shape[0], len(freqs_grid)))
                     for i in range(psds_raw.shape[0]):
                         psds_i[i, :] = np.interp(freqs_grid, freqs_raw, psds_raw[i, :])
+                    psds_i = np.log1p(psds_i)
                     if prob is not None and lead_name in prob:
                         _prob = prob[lead_name]
                         if ec * epoch_len_sec != np.shape(_prob)[0] * 2:
