@@ -1566,7 +1566,13 @@ def main():
                                 row[f"{label} Z"] = "N/A"
                         for key, label in rel_cols:
                             v = sd.get(key)
-                            row[label] = f"{np.mean(v):.4f}" if v is not None and len(v) > 0 else "N/A"
+                            val = float(np.mean(v)) if v is not None and len(v) > 0 else None
+                            row[label] = f"{val:.4f}" if val is not None else "N/A"
+                            if _ez and _ard:
+                                z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
+                                row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
+                            else:
+                                row[f"{label} Z"] = "N/A"
                         total_v = sd.get("DT_total_R")
                         row["总功率"] = f"{np.mean(total_v):.4f}" if total_v is not None and len(total_v) > 0 else "N/A"
                         all_rows.append(row)

@@ -146,7 +146,7 @@ def get_spec_stat_info(SPEC_second):
 
         # --- 以下是单张矩阵的特征计算逻辑 (针对当前这个样本的 N) ---
         # 因为现在 sample 是 2D 数组 (N, 128)，所以压缩频率轴要用 axis=1
-        _total = np.mean(sample[:, 1:70], axis=1) + 1e-6
+        
 
         _delta = np.mean(sample[:, 1:4], axis=1)
         _theta = np.mean(sample[:, 4:8], axis=1)
@@ -160,7 +160,9 @@ def get_spec_stat_info(SPEC_second):
         _gamma = np.mean(sample[:, 30:70], axis=1)
         _gamma_1 = np.mean(sample[:, 30:50], axis=1)
         _gamma_2 = np.mean(sample[:, 50:70], axis=1)
-
+        
+        _total = _alpha + _theta + _beta + _delta + _gamma + 1e-6
+        
         _r_delta = _delta / _total
         _r_theta = _theta / _total
         _r_alpha = _alpha / _total
