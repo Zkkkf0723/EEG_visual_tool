@@ -588,7 +588,7 @@ def main():
                 
                 # 5. 计算完整 montage（始终获取全部三种导联类型）
                 status.update(label="🔗 计算导联数据...")
-                full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 0.5, 70)
+                full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 1.5, 70)
                 
                 # 5b. 如果没有上传Prob文件，自动生成伪迹概率
                 if prob_dict is None:
