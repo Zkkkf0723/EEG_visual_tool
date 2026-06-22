@@ -229,9 +229,9 @@ def load_normal_reference_data(json_dir_hash: str):
     """加载正常参考数据（新版 Normal_Reference 格式）"""
     # 尝试多个可能的路径
     possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Normal_Reference", "normal", "combined_result.json"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "normal", "combined_result.json"),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Normal_Reference", "normal", "combined_result.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Normal_Reference", "normal", "combined_result_0611.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "normal", "combined_result_0611.json"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Normal_Reference", "normal", "combined_result_0611.json"),
     ]
     
     json_path = None
@@ -1054,7 +1054,7 @@ def main():
             
             # ========== 显示正常参考值 ==========
             if enable_zscore and all_ref_data:
-                with st.expander("📚 查看正常参考值（均值±标准差）", expanded=False):
+                with st.expander(f"📚 查看正常参考值（均值±{zscore_threshold}σ 范围）", expanded=False):
                     ref_df_data = []
                     for lead in valid_leads[:5]:  # 只显示前5个导联避免太长
                         for band in ["TBR", "DAR", "DTR", "ABR", "ATR", "DTAR"]:
@@ -1082,7 +1082,7 @@ def main():
                                     "指标": band,
                                     "正常均值": f"{mean_val:.4f}",
                                     "正常标准差": f"{std_val:.4f}",
-                                    "正常范围": f"[{mean_val - 2*std_val:.4f}, {mean_val + 2*std_val:.4f}]"
+                                    "正常范围": f"[{mean_val - zscore_threshold*std_val:.4f}, {mean_val + zscore_threshold*std_val:.4f}]"
                                 })
                     if ref_df_data:
                         ref_df = pd.DataFrame(ref_df_data)

@@ -91,7 +91,7 @@ def merge_json_files(folder_path, output_filename):
 # --- 使用示例 ---
 # 替换为你的 JSON 文件夹路径
 my_folder = "./data_json"
-output_file = "./combined_result.json"
+output_file = "./combined_result_0611.json"
 
 # merge_json_files(my_folder, output_file)
 
