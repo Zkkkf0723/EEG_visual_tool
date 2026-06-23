@@ -230,7 +230,8 @@ for j in range(len(SPY)):
         }
     }
 
-    json_filename = "sp_reference_{}.json".format(SPY[j])
+    output_dir = os.path.dirname(os.path.abspath(__file__))
+    json_filename = os.path.join(output_dir, "sp_reference_{}.json".format(SPY[j]))
     with open(json_filename, "w", encoding="utf-8") as jf:
         json.dump(ref_data, jf, ensure_ascii=False, indent=2)
 
