@@ -5,6 +5,7 @@ import pickle
 import numpy as np
 import json
 import os
+import glob
 import tempfile
 import pandas as pd
 from io import BytesIO
@@ -256,6 +257,55 @@ def load_normal_reference_data(json_dir_hash: str):
         return None
 
 
+def load_sp_reference_data():
+    """加载 SP 参照值数据（show_sp.py 输出的 JSON）"""
+    # 尝试多个可能的路径
+    possible_paths = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sp_reference_*.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "sp_reference_*.json"),
+    ]
+    
+    for pattern in possible_paths:
+        sp_files = sorted(glob.glob(pattern))
+        if sp_files:
+            break
+    
+    if not sp_files:
+        return None
+    
+    try:
+        combined = {}
+        for sp_file in sp_files:
+            with open(sp_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                combined.update(data)
+        return combined
+    except Exception as e:
+        st.warning(f"加载 SP 参照数据失败: {e}")
+        return None
+
+
+def get_sp_ref(sp_ref_data, band, lead, stat_type='mean'):
+    """获取 SP 参照值
+    
+    SP 参照值不需要 age_group 和 window_sizes，直接通过 lead__band 查找。
+    """
+    if sp_ref_data is None:
+        return None
+    # 键名映射（与 get_normal_ref 保持一致）
+    band_key = band
+    if band == 'DTAR':
+        band_key = 'DT_AR'
+    new_key = f"{lead}__{band_key}"
+    for key in sp_ref_data.keys():
+        g_info = sp_ref_data[key].get('g_info', {})
+        if new_key in g_info:
+            val = g_info[new_key].get(stat_type)
+            if val is not None:
+                return val
+    return None
+
+
 def get_normal_ref(all_ref_data, age_group, band, lead, stat_type='mean', window_sizes=None):
     """获取正常参考值（适配新版 Normal_Reference 数据格式）
 
@@ -500,6 +550,14 @@ def main():
         )
         
         zscore_threshold = st.slider("Z-score异常阈值", 1.0, 3.0, 2.0, 0.1, key="zscore_threshold")
+        
+        ref_source = st.selectbox(
+            "选择参考数据源",
+            ["常模 (Normal_Reference)", "SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"],
+            index=0,
+            key="ref_source",
+            help="常模：基于 Normal_Reference 的统计常模\nSP 参照值：基于 show_sp.py 输出的 SOLAR2000 参考值\n双参照对比：同时显示两组参照值"
+        )
     
     # 构建当前参数
     current_params = {
@@ -514,7 +572,8 @@ def main():
         'enable_zscore': enable_zscore,
         'selected_age_group': selected_age_group,
         'window_sizes': tuple(sorted(window_sizes)),
-        'zscore_threshold': zscore_threshold
+        'zscore_threshold': zscore_threshold,
+        'ref_source': ref_source
     }
     
     # 检查是否需要重新计算（edf_file存在且参数变化时自动计算）
@@ -553,10 +612,16 @@ def main():
                 # 3. 加载正常参考数据
                 status.update(label="📚 加载参考数据...")
                 all_ref_data = None
+                sp_ref_data = None
                 if enable_zscore:
                     all_ref_data = load_normal_reference_data(None)
                     if all_ref_data is None:
                         st.warning("⚠️ 正常参考数据加载失败！Z-score功能将不可用。")
+                    # 如果选择了 SP 参照或双参照，额外加载 SP 参照
+                    if ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"]:
+                        sp_ref_data = load_sp_reference_data()
+                        if sp_ref_data is None:
+                            st.warning("⚠️ SP 参照值加载失败！请先运行 show_sp.py 生成 JSON 文件。")
                 
                 # 4. 准备数据
                 status.update(label="🔧 准备数据...")
@@ -743,6 +808,7 @@ def main():
                     'epoch_times': epoch_times,
                     'leads_list': leads_list,
                     'all_ref_data': all_ref_data,
+                    'sp_ref_data': sp_ref_data,
                     'freqs': freqs,
                     'full_montage_dict': full_montage_dict,
                     'epoch_count': epoch_count,
@@ -773,8 +839,11 @@ def main():
         spec_dict_all = results['spec_dict_all']
         epoch_times = results['epoch_times']
         all_ref_data = results.get('all_ref_data')
+        sp_ref_data = results.get('sp_ref_data')
         if enable_zscore and not all_ref_data:
             all_ref_data = load_normal_reference_data(None)
+        if enable_zscore and sp_ref_data is None and ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"]:
+            sp_ref_data = load_sp_reference_data()
         freqs = results.get('freqs')  # 获取频率轴数据
         
         valid_leads = [l for l in selected_leads if l in spec_dict_all or l in ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]]
@@ -895,22 +964,57 @@ def main():
                             normal_mean = np.mean(g_means) if g_means else None
                             normal_std = np.mean(g_stds) if g_stds else None
                         if normal_mean is None or normal_std is None or normal_std == 0:
-                            continue
-                        upper = normal_mean + zscore_threshold * normal_std
-                        lower = normal_mean - zscore_threshold * normal_std
-                        n_epochs = len(epoch_times)
-                        # hex颜色转 rgba 半透明
-                        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-                        fig.add_trace(go.Scatter(
-                            x=list(range(n_epochs)) + list(range(n_epochs))[::-1],
-                            y=[upper] * n_epochs + [lower] * n_epochs,
-                            fill='toself',
-                            fillcolor=f'rgba({r},{g},{b},0.1)',
-                            line=dict(color='rgba(0,0,0,0)'),
-                            name=f'{name} 参考',
-                            showlegend=False,
-                            hoverinfo='skip'
-                        ))
+                            pass
+                        else:
+                            upper = normal_mean + zscore_threshold * normal_std
+                            lower = normal_mean - zscore_threshold * normal_std
+                            n_epochs = len(epoch_times)
+                            # hex颜色转 rgba 半透明
+                            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                            fig.add_trace(go.Scatter(
+                                x=list(range(n_epochs)) + list(range(n_epochs))[::-1],
+                                y=[upper] * n_epochs + [lower] * n_epochs,
+                                fill='toself',
+                                fillcolor=f'rgba({r},{g},{b},0.1)',
+                                line=dict(color='rgba(0,0,0,0)'),
+                                name=f'{name} 参考(常模)',
+                                showlegend=False,
+                                hoverinfo='skip'
+                            ))
+                        
+                        # SP 参照值阴影
+                        if ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"] and sp_ref_data:
+                            if lead not in _VIRTUAL_LEADS:
+                                sp_mean = get_sp_ref(sp_ref_data, key, lead, 'mean')
+                                sp_std = get_sp_ref(sp_ref_data, key, lead, 'std')
+                            else:
+                                group_leads_for_ref = _group_virtual.get(lead, [])
+                                g_means = []
+                                g_stds = []
+                                for gl in group_leads_for_ref:
+                                    rm = get_sp_ref(sp_ref_data, key, gl, 'mean')
+                                    rs = get_sp_ref(sp_ref_data, key, gl, 'std')
+                                    if rm is not None:
+                                        g_means.append(rm)
+                                    if rs is not None:
+                                        g_stds.append(rs)
+                                sp_mean = np.mean(g_means) if g_means else None
+                                sp_std = np.mean(g_stds) if g_stds else None
+                            if sp_mean is not None and sp_std is not None and sp_std > 0:
+                                sp_upper = sp_mean + zscore_threshold * sp_std
+                                sp_lower = sp_mean - zscore_threshold * sp_std
+                                n_epochs = len(epoch_times)
+                                r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+                                fig.add_trace(go.Scatter(
+                                    x=list(range(n_epochs)) + list(range(n_epochs))[::-1],
+                                    y=[sp_upper] * n_epochs + [sp_lower] * n_epochs,
+                                    fill='toself',
+                                    fillcolor=f'rgba({r},{g},{b},0.05)',
+                                    line=dict(color=f'rgba({r},{g},{b},0.4)', width=1, dash='dash'),
+                                    name=f'{name} 参考(SP)',
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
                 fig.update_layout(
                     title=dict(text=f"<b>{lead}</b> 频段功率分布", x=0.5),
                     xaxis_title="Epoch",
@@ -996,8 +1100,8 @@ def main():
                         upper = None
                         lower = None
                         
-                        # 添加参考范围
-                        if enable_zscore and all_ref_data:
+                        # 添加参考范围（常模）
+                        if enable_zscore and all_ref_data and ref_source in ["常模 (Normal_Reference)", "双参照对比 (常模 + SP)"]:
                             if lead not in _VIRTUAL_LEADS:
                                 normal_mean = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'mean', window_sizes)
                                 normal_std = get_normal_ref(all_ref_data, selected_age_group, ratio, lead, 'std', window_sizes)
@@ -1018,14 +1122,45 @@ def main():
                                 upper = normal_mean + zscore_threshold * normal_std
                                 lower = normal_mean - zscore_threshold * normal_std
                                 data_len = len(data)
-                                
                                 fig.add_trace(go.Scatter(
                                     x=list(range(data_len)) + list(range(data_len))[::-1],
                                     y=[upper] * data_len + [lower] * data_len,
                                     fill='toself',
                                     fillcolor='rgba(255,0,0,0.1)',
                                     line=dict(color='rgba(255,0,0,0)'),
-                                    name=f'{ratio}参考范围',
+                                    name=f'{ratio}常模范围',
+                                    showlegend=True
+                                ))
+                        
+                        # 添加参考范围（SP参照值）
+                        if enable_zscore and sp_ref_data and ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"]:
+                            if lead not in _VIRTUAL_LEADS:
+                                sp_mean = get_sp_ref(sp_ref_data, ratio, lead, 'mean')
+                                sp_std = get_sp_ref(sp_ref_data, ratio, lead, 'std')
+                            else:
+                                group_leads_for_ref = _group_virtual.get(lead, [])
+                                g_means = []
+                                g_stds = []
+                                for gl in group_leads_for_ref:
+                                    rm = get_sp_ref(sp_ref_data, ratio, gl, 'mean')
+                                    rs = get_sp_ref(sp_ref_data, ratio, gl, 'std')
+                                    if rm is not None:
+                                        g_means.append(rm)
+                                    if rs is not None:
+                                        g_stds.append(rs)
+                                sp_mean = np.mean(g_means) if g_means else None
+                                sp_std = np.mean(g_stds) if g_stds else None
+                            if sp_mean is not None and sp_std is not None and sp_std > 0:
+                                sp_upper = sp_mean + zscore_threshold * sp_std
+                                sp_lower = sp_mean - zscore_threshold * sp_std
+                                data_len = len(data)
+                                fig.add_trace(go.Scatter(
+                                    x=list(range(data_len)) + list(range(data_len))[::-1],
+                                    y=[sp_upper] * data_len + [sp_lower] * data_len,
+                                    fill='toself',
+                                    fillcolor='rgba(0,0,255,0.08)',
+                                    line=dict(color='rgba(0,0,255,0.3)', width=1, dash='dash'),
+                                    name=f'{ratio}SP范围',
                                     showlegend=True
                                 ))
                         
@@ -1053,44 +1188,73 @@ def main():
             st.subheader("📋 统计汇总")
             
             # ========== 显示正常参考值 ==========
-            if enable_zscore and all_ref_data:
+            if enable_zscore and (all_ref_data or sp_ref_data):
                 with st.expander(f"📚 查看正常参考值（均值±{zscore_threshold}σ 范围）", expanded=False):
                     ref_df_data = []
                     for lead in valid_leads[:5]:  # 只显示前5个导联避免太长
                         for band in ["TBR", "DAR", "DTR", "ABR", "ATR", "DTAR"]:
                             band_key_map = {"DTAR": "DT_AR"}
                             band_key = band_key_map.get(band, band)
-                            if lead not in _VIRTUAL_LEADS:
-                                mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
-                                std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
-                            else:
-                                group_leads_for_ref = _group_virtual.get(lead, [])
-                                g_means = []
-                                g_stds = []
-                                for gl in group_leads_for_ref:
-                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
-                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
-                                    if rm is not None:
-                                        g_means.append(rm)
-                                    if rs is not None:
-                                        g_stds.append(rs)
-                                mean_val = np.mean(g_means) if g_means else None
-                                std_val = np.mean(g_stds) if g_stds else None
-                            if mean_val is not None and std_val is not None:
-                                ref_df_data.append({
-                                    "导联": lead,
-                                    "指标": band,
-                                    "正常均值": f"{mean_val:.4f}",
-                                    "正常标准差": f"{std_val:.4f}",
-                                    "正常范围": f"[{mean_val - zscore_threshold*std_val:.4f}, {mean_val + zscore_threshold*std_val:.4f}]"
-                                })
+                            if ref_source in ["常模 (Normal_Reference)", "双参照对比 (常模 + SP)"] and all_ref_data:
+                                if lead not in _VIRTUAL_LEADS:
+                                    mean_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
+                                    std_val = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
+                                else:
+                                    group_leads_for_ref = _group_virtual.get(lead, [])
+                                    g_means = []
+                                    g_stds = []
+                                    for gl in group_leads_for_ref:
+                                        rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
+                                        rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
+                                        if rm is not None:
+                                            g_means.append(rm)
+                                        if rs is not None:
+                                            g_stds.append(rs)
+                                    mean_val = np.mean(g_means) if g_means else None
+                                    std_val = np.mean(g_stds) if g_stds else None
+                                if mean_val is not None and std_val is not None:
+                                    ref_df_data.append({
+                                        "导联": lead,
+                                        "指标": band,
+                                        "参考源": "常模",
+                                        "均值": f"{mean_val:.4f}",
+                                        "标准差": f"{std_val:.4f}",
+                                        "正常范围": f"[{mean_val - zscore_threshold*std_val:.4f}, {mean_val + zscore_threshold*std_val:.4f}]"
+                                    })
+                            if ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"] and sp_ref_data:
+                                if lead not in _VIRTUAL_LEADS:
+                                    sp_mean = get_sp_ref(sp_ref_data, band, lead, 'mean')
+                                    sp_std = get_sp_ref(sp_ref_data, band, lead, 'std')
+                                else:
+                                    group_leads_for_ref = _group_virtual.get(lead, [])
+                                    g_means = []
+                                    g_stds = []
+                                    for gl in group_leads_for_ref:
+                                        rm = get_sp_ref(sp_ref_data, band, gl, 'mean')
+                                        rs = get_sp_ref(sp_ref_data, band, gl, 'std')
+                                        if rm is not None:
+                                            g_means.append(rm)
+                                        if rs is not None:
+                                            g_stds.append(rs)
+                                    sp_mean = np.mean(g_means) if g_means else None
+                                    sp_std = np.mean(g_stds) if g_stds else None
+                                if sp_mean is not None and sp_std is not None:
+                                    ref_df_data.append({
+                                        "导联": lead,
+                                        "指标": band,
+                                        "参考源": "SP",
+                                        "均值": f"{sp_mean:.4f}",
+                                        "标准差": f"{sp_std:.4f}",
+                                        "正常范围": f"[{sp_mean - zscore_threshold*sp_std:.4f}, {sp_mean + zscore_threshold*sp_std:.4f}]"
+                                    })
                     if ref_df_data:
                         ref_df = pd.DataFrame(ref_df_data)
                         st.dataframe(ref_df, use_container_width=True, hide_index=True)
             
             # ========== 1. 汇总表格（所有导联的Z-score一览）==========
-            if enable_zscore and all_ref_data:
-                st.markdown(f"**📊 正常参考对比** (年龄组: `{selected_age_group}`, 阈值: Z-score > {zscore_threshold})")
+            if enable_zscore and (all_ref_data or sp_ref_data):
+                ref_source_label = "常模" if ref_source == "常模 (Normal_Reference)" else ("SP" if ref_source == "SP 参照值 (SOLAR2000)" else "常模+SP")
+                st.markdown(f"**📊 正常参考对比** ({ref_source_label}, 阈值: Z-score > {zscore_threshold})")
                 
                 # 构建汇总数据
                 summary_data = []
@@ -1102,26 +1266,52 @@ def main():
                         band_key = band_key_map.get(band, band)
                         band_data = sd.get(band_key, [])
                         val = np.mean(band_data) if len(band_data) > 0 else 0
-                        if lead not in _VIRTUAL_LEADS:
-                            ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
-                            ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
-                        else:
-                            group_leads_for_ref = _group_virtual.get(lead, [])
-                            group_means = []
-                            group_stds = []
-                            for gl in group_leads_for_ref:
-                                rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
-                                rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
-                                if rm is not None and rs is not None and rs > 0:
-                                    group_means.append(rm)
-                                    group_stds.append(rs)
-                            ref_mean = np.mean(group_means) if group_means else None
-                            ref_std = np.mean(group_stds) if group_stds else None
-                        if ref_mean is not None and ref_std is not None and ref_std > 0:
-                            z = (val - ref_mean) / ref_std
-                            row[band] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
-                        else:
-                            row[band] = "N/A"
+                        
+                        # 常模 Z-score
+                        if ref_source in ["常模 (Normal_Reference)", "双参照对比 (常模 + SP)"] and all_ref_data:
+                            if lead not in _VIRTUAL_LEADS:
+                                ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
+                                ref_std = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'std', window_sizes)
+                            else:
+                                group_leads_for_ref = _group_virtual.get(lead, [])
+                                group_means = []
+                                group_stds = []
+                                for gl in group_leads_for_ref:
+                                    rm = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'mean', window_sizes)
+                                    rs = get_normal_ref(all_ref_data, selected_age_group, band, gl, 'std', window_sizes)
+                                    if rm is not None and rs is not None and rs > 0:
+                                        group_means.append(rm)
+                                        group_stds.append(rs)
+                                ref_mean = np.mean(group_means) if group_means else None
+                                ref_std = np.mean(group_stds) if group_stds else None
+                            if ref_mean is not None and ref_std is not None and ref_std > 0:
+                                z = (val - ref_mean) / ref_std
+                                row[f"{band}(常模)"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                            else:
+                                row[f"{band}(常模)"] = "N/A"
+                        
+                        # SP 参照值 Z-score
+                        if ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"] and sp_ref_data:
+                            if lead not in _VIRTUAL_LEADS:
+                                sp_mean = get_sp_ref(sp_ref_data, band, lead, 'mean')
+                                sp_std = get_sp_ref(sp_ref_data, band, lead, 'std')
+                            else:
+                                group_leads_for_ref = _group_virtual.get(lead, [])
+                                group_means = []
+                                group_stds = []
+                                for gl in group_leads_for_ref:
+                                    rm = get_sp_ref(sp_ref_data, band, gl, 'mean')
+                                    rs = get_sp_ref(sp_ref_data, band, gl, 'std')
+                                    if rm is not None and rs is not None and rs > 0:
+                                        group_means.append(rm)
+                                        group_stds.append(rs)
+                                sp_mean = np.mean(group_means) if group_means else None
+                                sp_std = np.mean(group_stds) if group_stds else None
+                            if sp_mean is not None and sp_std is not None and sp_std > 0:
+                                z = (val - sp_mean) / sp_std
+                                row[f"{band}(SP)"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                            else:
+                                row[f"{band}(SP)"] = "N/A"
                     summary_data.append(row)
                 
                 # 显示汇总表格
@@ -1458,6 +1648,27 @@ def main():
                     return (val - rm) / rs, rm, rs
                 return None, rm, rs
             
+            def _zscore_for_lead_sp(lead, band_key, val, _srd, _virt_leads, _grp_virtual):
+                """使用 SP 参照值计算 Z-score，返回 (z_value, ref_mean, ref_std)"""
+                if _srd is None:
+                    return None, None, None
+                if lead not in _virt_leads:
+                    rm = get_sp_ref(_srd, band_key, lead, 'mean')
+                    rs = get_sp_ref(_srd, band_key, lead, 'std')
+                else:
+                    gl_list = _grp_virtual.get(lead, [])
+                    g_means, g_stds = [], []
+                    for gl in gl_list:
+                        r1 = get_sp_ref(_srd, band_key, gl, 'mean')
+                        r2 = get_sp_ref(_srd, band_key, gl, 'std')
+                        if r1 is not None: g_means.append(r1)
+                        if r2 is not None: g_stds.append(r2)
+                    rm = np.mean(g_means) if g_means else None
+                    rs = np.mean(g_stds) if g_stds else None
+                if rm is not None and rs is not None and rs > 0 and val is not None:
+                    return (val - rm) / rs, rm, rs
+                return None, rm, rs
+            
             def _build_export_spec(montage_dict, type_label, lead_opts, left_l, right_l, ec, fs_val, np_len, art_th, prob):
                 """为一种导联类型构建 spec_dict 和虚拟组"""
                 def _flt(name):
@@ -1503,8 +1714,14 @@ def main():
                  [l for l in avg_leads if _is_right_lead(l)]),
             ]
             
-            def generate_export_excel(_ez, _ard, _age, _zth, _duration_sec, _sfreq):
+            def generate_export_excel(_ez, _ard, _age, _zth, _duration_sec, _sfreq, _srd=None, _ref_src="常模 (Normal_Reference)"):
                 """生成导出Excel（三种导联类型，含Z-score和诊断）"""
+                # 导出时始终计算所有可用的参考值，不受界面选择限制
+                # 如果常模数据未传入（比如从旧 session 恢复），重新加载
+                if _ez and _ard is None:
+                    _ard = load_normal_reference_data(None)
+                _has_sp = _srd is not None
+                _has_norm = _ard is not None
                 buf = BytesIO()
                 band_cols = [
                     ("delta", "δ (1-4Hz)"), ("theta", "θ (4-8Hz)"),
@@ -1549,30 +1766,51 @@ def main():
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            if _ez and _ard:
+                            # 常模 Z
+                            if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
                                 row[f"{label} Z"] = "N/A"
+                            # SP 参照 Z
+                            if _ez and _has_sp:
+                                z_sp, _, _ = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
+                            else:
+                                row[f"{label} Z(SP)"] = "N/A"
                         for key, label in ratio_cols:
                             ref_key = _data_key_to_ref.get(key, key)
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            if _ez and _ard:
+                            # 常模 Z
+                            if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, ref_key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
                                 row[f"{label} Z"] = "N/A"
+                            # SP 参照 Z
+                            if _ez and _has_sp:
+                                z_sp, _, _ = _zscore_for_lead_sp(lead, ref_key, val, _srd, _VTL, grp_v_local)
+                                row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
+                            else:
+                                row[f"{label} Z(SP)"] = "N/A"
                         for key, label in rel_cols:
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            if _ez and _ard:
+                            # 常模 Z
+                            if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
                                 row[f"{label} Z"] = "N/A"
+                            # SP 参照 Z
+                            if _ez and _has_sp:
+                                z_sp, _, _ = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
+                            else:
+                                row[f"{label} Z(SP)"] = "N/A"
                         total_v = sd.get("DT_total_R")
                         row["总功率"] = f"{np.mean(total_v):.4f}" if total_v is not None and len(total_v) > 0 else "N/A"
                         all_rows.append(row)
@@ -1590,12 +1828,17 @@ def main():
                 buf.seek(0)
                 return buf
             
-            if enable_zscore and not all_ref_data:
-                st.warning("⚠️ 未加载参考数据，无法计算Z-score")
+            if enable_zscore:
+                has_norm = all_ref_data is not None
+                has_sp = sp_ref_data is not None
+                need_norm = ref_source in ["常模 (Normal_Reference)", "双参照对比 (常模 + SP)"]
+                need_sp = ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"]
+                if (need_norm and not has_norm) and (need_sp and not has_sp):
+                    st.warning("⚠️ 常模和SP参照均未加载，无法计算Z-score")
             
             if st.button("📥 生成导出文件", type="primary", key="gen_excel_btn"):
                 with st.spinner("正在计算全部三种导联类型（双极/耳电极/平均参考）..."):
-                    excel_buf = generate_export_excel(enable_zscore, all_ref_data, selected_age_group, zscore_threshold, results.get('duration_sec', 0), results.get('sfreq_val', 256))
+                    excel_buf = generate_export_excel(enable_zscore, all_ref_data, selected_age_group, zscore_threshold, results.get('duration_sec', 0), results.get('sfreq_val', 256), sp_ref_data, ref_source)
                 st.session_state.export_buf = excel_buf
                 st.session_state.export_ready = True
             

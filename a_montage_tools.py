@@ -600,9 +600,15 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
     F8 = get_ch("F8")
     T4 = get_ch("T4")
     T6 = get_ch("T6")
-    FZ = get_ch("FZ")
-    CZ = get_ch("CZ")
-    PZ = get_ch("PZ")
+    _midline_available = {}
+    for _mch in ["FZ", "CZ", "PZ"]:
+        try:
+            _midline_available[_mch] = get_ch(_mch)
+        except KeyError:
+            _midline_available[_mch] = None
+    FZ = _midline_available.get("FZ")
+    CZ = _midline_available.get("CZ")
+    PZ = _midline_available.get("PZ")
     
     if has_avg_suffix:
         A1 = (Fp1+F3+C3+P3+O1+F7+T3+T5)/8
@@ -652,9 +658,7 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
         "T4-T6": butter_bandpass_filter(T4 - T6, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T5-O1": butter_bandpass_filter(T5 - O1, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T6-O2": butter_bandpass_filter(T6 - O2, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Fz-Pz": butter_bandpass_filter(FZ - CZ, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Cz-Pz": butter_bandpass_filter(CZ - PZ, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Pz-Oz": butter_bandpass_filter(PZ - (O1+O2)/2, low_cut= l_cut, high_cut=h_cut, fs=256),
+
 
         "Fp1-AVG": butter_bandpass_filter(Fp1, low_cut= l_cut, high_cut=h_cut, fs=256),
         "Fp2-AVG": butter_bandpass_filter(Fp2, low_cut= l_cut, high_cut=h_cut, fs=256),
@@ -672,12 +676,21 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
         "T4-AVG": butter_bandpass_filter(T4, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T5-AVG": butter_bandpass_filter(T5, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T6-AVG": butter_bandpass_filter(T6, low_cut= l_cut, high_cut=h_cut, fs=256),
-
-
-        "Fz-AVG": butter_bandpass_filter(FZ, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Cz-AVG": butter_bandpass_filter(CZ, low_cut= l_cut, high_cut=h_cut, fs=256),
-        "Pz-AVG": butter_bandpass_filter(PZ, low_cut= l_cut, high_cut=h_cut, fs=256),
     }
+    
+    # 中线电极导联（可选，如果电极不存在则跳过）
+    if FZ is not None and CZ is not None:
+        out_dict["Fz-Pz"] = butter_bandpass_filter(FZ - CZ, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if CZ is not None and PZ is not None:
+        out_dict["Cz-Pz"] = butter_bandpass_filter(CZ - PZ, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if PZ is not None:
+        out_dict["Pz-Oz"] = butter_bandpass_filter(PZ - (O1+O2)/2, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if FZ is not None:
+        out_dict["Fz-AVG"] = butter_bandpass_filter(FZ, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if CZ is not None:
+        out_dict["Cz-AVG"] = butter_bandpass_filter(CZ, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if PZ is not None:
+        out_dict["Pz-AVG"] = butter_bandpass_filter(PZ, low_cut=l_cut, high_cut=h_cut, fs=256)
     
     # 可选电极（10-10系统扩展电极，可能不存在）
     _optional_electrodes = ["Fpz", "Oz"]
