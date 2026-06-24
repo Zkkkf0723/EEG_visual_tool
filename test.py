@@ -299,7 +299,8 @@ def get_sp_ref(sp_ref_data, band, lead, stat_type='mean'):
     new_key = f"{lead}__{band_key}"
     for key in sp_ref_data.keys():
         g_info = sp_ref_data[key].get('g_info', {})
-        if new_key in g_info:
+        found = new_key in g_info
+        if found:
             val = g_info[new_key].get(stat_type)
             if val is not None:
                 return val
@@ -415,6 +416,48 @@ def calculate_alpha_asymmetry_series(spec_dict_all, left_lead, right_lead):
     return asymmetry_series
 
 
+def calculate_beta_asymmetry(spec_dict_all, left_lead, right_lead):
+    """计算 Beta 不对称指数
+    
+    公式: (L - R) / (L + R)
+    L = 左侧电极 beta 功率
+    R = 右侧电极 beta 功率
+    """
+    if left_lead not in spec_dict_all or right_lead not in spec_dict_all:
+        return None
+    
+    left_beta = np.mean(spec_dict_all[left_lead].get('beta', [0]))
+    right_beta = np.mean(spec_dict_all[right_lead].get('beta', [0]))
+    
+    if left_beta + right_beta == 0:
+        return 0.0
+    
+    return (left_beta - right_beta) / (left_beta + right_beta)
+
+
+def calculate_beta_asymmetry_series(spec_dict_all, left_lead, right_lead):
+    """计算每个epoch的Beta不对称指数时序
+    
+    公式: (L - R) / (L + R)
+    """
+    if left_lead not in spec_dict_all or right_lead not in spec_dict_all:
+        return None
+    
+    left_beta = np.array(spec_dict_all[left_lead].get('beta', []))
+    right_beta = np.array(spec_dict_all[right_lead].get('beta', []))
+    
+    if len(left_beta) == 0 or len(right_beta) == 0:
+        return None
+    
+    if len(left_beta) != len(right_beta):
+        min_len = min(len(left_beta), len(right_beta))
+        left_beta = left_beta[:min_len]
+        right_beta = right_beta[:min_len]
+    
+    asymmetry_series = (left_beta - right_beta) / (left_beta + right_beta + 1e-8)
+    return asymmetry_series
+
+
 def get_asymmetry_ref(all_ref_data, age_group, asymmetry_key, ref_type='mean'):
     """获取不对称指数的正常参考值"""
     if all_ref_data is None:
@@ -436,6 +479,144 @@ def get_asymmetry_ref(all_ref_data, age_group, asymmetry_key, ref_type='mean'):
         if asymmetry_key in f3478_info:
             mean = f3478_info[asymmetry_key].get('mean')
             std = f3478_info[asymmetry_key].get('std')
+            return mean, std
+    
+    return None, None
+
+
+# ========== 前后梯度（AP）计算函数 ==========
+
+def calculate_ap_gradient(spec_dict_all, band_key, anterior_leads, posterior_leads):
+    """计算前后梯度（AP）值
+    
+    公式: AP = (P_Anterior - P_Posterior) / (P_Anterior + P_Posterior)
+    
+    Parameters
+    ----------
+    spec_dict_all : dict
+        包含各导联各频段PSD数据的字典
+    band_key : str
+        频段名称，如 'delta', 'theta', 'alpha', 'beta'
+    anterior_leads : list
+        前部脑区导联列表
+    posterior_leads : list
+        后部脑区导联列表
+    
+    Returns
+    -------
+    float
+        AP梯度值，取值范围 [-1, 1]
+    """
+    anterior_powers = []
+    for lead in anterior_leads:
+        if lead in spec_dict_all:
+            data = spec_dict_all[lead].get(band_key)
+            if data is not None and isinstance(data, (np.ndarray, list)) and len(data) > 0:
+                anterior_powers.append(np.mean(data))
+    
+    posterior_powers = []
+    for lead in posterior_leads:
+        if lead in spec_dict_all:
+            data = spec_dict_all[lead].get(band_key)
+            if data is not None and isinstance(data, (np.ndarray, list)) and len(data) > 0:
+                posterior_powers.append(np.mean(data))
+    
+    if len(anterior_powers) == 0 or len(posterior_powers) == 0:
+        return None
+    
+    P_anterior = np.mean(anterior_powers)
+    P_posterior = np.mean(posterior_powers)
+    
+    denominator = P_anterior + P_posterior
+    if denominator == 0:
+        return 0.0
+    
+    return (P_anterior - P_posterior) / denominator
+
+
+def calculate_ap_gradient_series(spec_dict_all, band_key, anterior_leads, posterior_leads):
+    """计算每个epoch的前后梯度（AP）时序
+    
+    公式: AP = (P_Anterior - P_Posterior) / (P_Anterior + P_Posterior)
+    
+    Returns
+    -------
+    numpy.ndarray
+        每个epoch的AP梯度值序列
+    """
+    anterior_series = []
+    for lead in anterior_leads:
+        if lead in spec_dict_all:
+            data = spec_dict_all[lead].get(band_key)
+            if data is not None and isinstance(data, (np.ndarray, list)) and len(data) > 0:
+                anterior_series.append(np.array(data))
+    
+    posterior_series = []
+    for lead in posterior_leads:
+        if lead in spec_dict_all:
+            data = spec_dict_all[lead].get(band_key)
+            if data is not None and isinstance(data, (np.ndarray, list)) and len(data) > 0:
+                posterior_series.append(np.array(data))
+    
+    if len(anterior_series) == 0 or len(posterior_series) == 0:
+        return None
+    
+    min_ant_len = min(len(a) for a in anterior_series)
+    min_pos_len = min(len(p) for p in posterior_series)
+    min_len = min(min_ant_len, min_pos_len)
+    
+    stacked_ant = np.array([a[:min_len] for a in anterior_series])
+    stacked_pos = np.array([p[:min_len] for p in posterior_series])
+    
+    P_anterior = np.mean(stacked_ant, axis=0)
+    P_posterior = np.mean(stacked_pos, axis=0)
+    
+    denominator = P_anterior + P_posterior
+    denominator = np.where(denominator == 0, 1e-10, denominator)
+    
+    return (P_anterior - P_posterior) / denominator
+
+
+def get_ap_ref(all_ref_data, age_group, ap_key):
+    """获取前后梯度（AP）的正常参考值
+    
+    AP参考值存储在参考数据的 f3478_info 中，键格式为:
+    {{montage_type}}__AP_{{band}}
+    如: B__AP_delta, B__AP_theta, B__AP_alpha, B__AP_beta
+    
+    Parameters
+    ----------
+    all_ref_data : dict
+        参考数据字典
+    age_group : str
+        年龄组
+    ap_key : str
+        AP参考键名，如 "B__AP_delta"
+    
+    Returns
+    -------
+    tuple
+        (mean, std) 或 (None, None)
+    """
+    if all_ref_data is None:
+        return None, None
+    
+    age_group_mapping = {
+        '0-6': 'age_0_6', '7-13': 'age_7_13', '14-18': 'age_14_18',
+        '19-44': 'age_19_44', '45-59': 'age_45_59', '60-80': 'age_60_80',
+        '80': 'age_80', 'total': 'age_19_44'
+    }
+    
+    age_prefix = age_group_mapping.get(age_group, 'age_19_44')
+    
+    for key in all_ref_data.keys():
+        if not key.startswith(age_prefix):
+            continue
+        
+        f3478_info = all_ref_data[key].get('f3478_info', {})
+        if ap_key in f3478_info:
+            mean = f3478_info[ap_key].get('mean')
+            std = f3478_info[ap_key].get('std')
             return mean, std
     
     return None, None
@@ -528,11 +709,57 @@ def main():
         
         left_leads = [l for l in lead_options if _is_left_lead(l)]
         right_leads = [l for l in lead_options if _is_right_lead(l)]
-        
-        # 在 multiselect 选项中添加 L/R/全脑 快捷组（作为虚拟导联，表示该组均值）
-        lead_options_with_groups = ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"] + lead_options
-        
-        selected_leads = st.multiselect("选择导联", lead_options_with_groups, default=default_leads, key="selected_leads")
+
+        # ========== 脑区划分导联组定义 ==========
+        EAR_REGION_GROUPS = {
+            "🧠 前额区": ["Fp1-A1", "Fp2-A2"],
+            "🧠 额中央区": ["F3-A1", "F4-A2"],
+            "🧠 中央区": ["C3-A1", "C4-A2"],
+            "🧠 顶枕区": ["P3-A1", "P4-A2", "O1-A1", "O2-A2"],
+            "🧠 颞区": ["F7-A1", "F8-A2", "T3-A1", "T4-A2", "T5-A1", "T6-A2"],
+            "🧠 左半球": ["Fp1-A1", "F3-A1", "C3-A1", "P3-A1", "O1-A1", "T3-A1", "T5-A1"],
+            "🧠 右半球": ["Fp2-A2", "F4-A2", "C4-A2", "P4-A2", "O2-A2", "T4-A2", "T6-A2"],
+            "🧠 前部脑区": ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2"],
+            "🧠 后部脑区": ["P3-A1", "P4-A2", "O1-A1", "O2-A2"],
+        }
+        BIPOLAR_REGION_GROUPS = {
+            "🧠 前额区": ["Fp1-F3", "Fp2-F4"],
+            "🧠 额中央区": ["Fp1-F3", "F3-C3", "Fp2-F4", "F4-C4", "Fz-Pz"],
+            "🧠 中央区": ["F3-C3", "C3-P3", "F4-C4", "C4-P4", "Fz-Pz", "Cz-Pz"],
+            "🧠 顶枕区": ["P3-O1", "P4-O2", "C3-P3", "C4-P4", "Cz-Pz", "Pz-Oz"],
+            "🧠 颞区": ["Fp1-F7", "F7-T3", "T3-T5", "T5-O1", "Fp2-F8", "F8-T4", "T4-T6", "T6-O2"],
+            "🧠 左半球": ["Fp1-F3", "F3-C3", "C3-P3", "P3-O1", "T3-T5"],
+            "🧠 右半球": ["Fp2-F4", "F4-C4", "C4-P4", "P4-O2", "T4-T6"],
+            "🧠 前部脑区": ["Fp1-F3", "F3-C3", "Fp2-F4", "F4-C4", "Fz-Pz"],
+            "🧠 后部脑区": ["P3-O1", "P4-O2", "C3-P3", "C4-P4", "Cz-Pz", "Pz-Oz"],
+        }
+        AVG_REGION_GROUPS = {
+            "🧠 前额区": ["Fp1-AVG", "Fp2-AVG"],
+            "🧠 额中央区": ["F3-AVG", "Fz-AVG", "F4-AVG"],
+            "🧠 中央区": ["C3-AVG", "Cz-AVG", "C4-AVG"],
+            "🧠 顶枕区": ["P3-AVG", "Pz-AVG", "P4-AVG", "O1-AVG", "O2-AVG"],
+            "🧠 颞区": ["F7-AVG", "F8-AVG", "T3-AVG", "T4-AVG", "T5-AVG", "T6-AVG"],
+            "🧠 左半球": ["Fp1-AVG", "F3-AVG", "C3-AVG", "P3-AVG", "O1-AVG", "T3-AVG", "T5-AVG"],
+            "🧠 右半球": ["Fp2-AVG", "F4-AVG", "C4-AVG", "P4-AVG", "O2-AVG", "T4-AVG", "T6-AVG"],
+            "🧠 前部脑区": ["Fp1-AVG", "Fp2-AVG", "F3-AVG", "Fz-AVG", "F4-AVG"],
+            "🧠 后部脑区": ["P3-AVG", "Pz-AVG", "P4-AVG", "O1-AVG", "O2-AVG"],
+        }
+
+        # 根据当前导联类型选择对应的脑区映射
+        if "耳电极" in lead_type:
+            region_groups = EAR_REGION_GROUPS
+        elif "平均" in lead_type:
+            region_groups = AVG_REGION_GROUPS
+        else:
+            region_groups = BIPOLAR_REGION_GROUPS
+
+        # 所有虚拟组脑区名称（保留原有全脑/左脑/右脑）
+        VIRTUAL_BRAIN_REGIONS = ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"] + list(region_groups.keys())
+
+        # 在 multiselect 选项中添加脑区虚拟组
+        lead_options_with_groups = VIRTUAL_BRAIN_REGIONS + lead_options
+
+        selected_leads = st.multiselect("选择导联（含脑区均值组）", lead_options_with_groups, default=default_leads, key="selected_leads")
         
         st.divider()
         
@@ -651,9 +878,12 @@ def main():
                     if norm_name != ch_name:
                         all_data_normalized[norm_name] = ch_data
                 
+
+                
                 # 5. 计算完整 montage（始终获取全部三种导联类型）
                 status.update(label="🔗 计算导联数据...")
                 full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 1.5, 70)
+                
                 
                 # 5b. 如果没有上传Prob文件，自动生成伪迹概率
                 if prob_dict is None:
@@ -842,25 +1072,27 @@ def main():
         sp_ref_data = results.get('sp_ref_data')
         if enable_zscore and not all_ref_data:
             all_ref_data = load_normal_reference_data(None)
-        if enable_zscore and sp_ref_data is None and ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"]:
+        if enable_zscore and sp_ref_data is None:
             sp_ref_data = load_sp_reference_data()
         freqs = results.get('freqs')  # 获取频率轴数据
         
-        valid_leads = [l for l in selected_leads if l in spec_dict_all or l in ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]]
-        
-        if not valid_leads:
-            st.warning("⚠️ 选中的导联无有效数据，请重新选择")
-            return
-        
-        # 虚拟组导联名称集合（这些导联在正常参考数据中无对应条目）
-        _VIRTUAL_LEADS = {"🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"}
-        
-        # 为虚拟组导联（全脑/左脑/右脑）计算组内均值
+        # 虚拟组导联名称集合（包括全脑/左脑/右脑 + 各脑区）
+        _VIRTUAL_LEADS = set(VIRTUAL_BRAIN_REGIONS)
+
+        # 为虚拟组导联计算组内均值（含基础组 + 脑区组）
         _group_virtual = {
             "🧠 全脑 (均值)": lead_options,
             "🧠 左脑 L (均值)": left_leads,
             "🧠 右脑 R (均值)": right_leads,
         }
+        _group_virtual.update(region_groups)
+
+        valid_leads = [l for l in selected_leads if l in spec_dict_all or l in _VIRTUAL_LEADS]
+
+        if not valid_leads:
+            st.warning("⚠️ 选中的导联无有效数据，请重新选择")
+            return
+
         for virt_name, group_leads in _group_virtual.items():
             if virt_name not in valid_leads:
                 continue
@@ -1266,8 +1498,9 @@ def main():
                         band_key = band_key_map.get(band, band)
                         band_data = sd.get(band_key, [])
                         val = np.mean(band_data) if len(band_data) > 0 else 0
-                        
-                        # 常模 Z-score
+                        row[f"{band}值"] = f"{val:.4f}"
+
+                        # 常模参考范围 + Z-score
                         if ref_source in ["常模 (Normal_Reference)", "双参照对比 (常模 + SP)"] and all_ref_data:
                             if lead not in _VIRTUAL_LEADS:
                                 ref_mean = get_normal_ref(all_ref_data, selected_age_group, band, lead, 'mean', window_sizes)
@@ -1285,12 +1518,16 @@ def main():
                                 ref_mean = np.mean(group_means) if group_means else None
                                 ref_std = np.mean(group_stds) if group_stds else None
                             if ref_mean is not None and ref_std is not None and ref_std > 0:
+                                low = ref_mean - zscore_threshold * ref_std
+                                high = ref_mean + zscore_threshold * ref_std
+                                row[f"{band}正常范围"] = f"[{low:.4f}, {high:.4f}]"
                                 z = (val - ref_mean) / ref_std
-                                row[f"{band}(常模)"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                                row[f"{band} Z"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
                             else:
-                                row[f"{band}(常模)"] = "N/A"
-                        
-                        # SP 参照值 Z-score
+                                row[f"{band}正常范围"] = "N/A"
+                                row[f"{band} Z"] = "N/A"
+
+                        # SP 参照正常范围 + Z-score
                         if ref_source in ["SP 参照值 (SOLAR2000)", "双参照对比 (常模 + SP)"] and sp_ref_data:
                             if lead not in _VIRTUAL_LEADS:
                                 sp_mean = get_sp_ref(sp_ref_data, band, lead, 'mean')
@@ -1308,10 +1545,14 @@ def main():
                                 sp_mean = np.mean(group_means) if group_means else None
                                 sp_std = np.mean(group_stds) if group_stds else None
                             if sp_mean is not None and sp_std is not None and sp_std > 0:
+                                low_sp = sp_mean - zscore_threshold * sp_std
+                                high_sp = sp_mean + zscore_threshold * sp_std
+                                row[f"{band}正常范围(SP)"] = f"[{low_sp:.4f}, {high_sp:.4f}]"
                                 z = (val - sp_mean) / sp_std
-                                row[f"{band}(SP)"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
+                                row[f"{band} Z(SP)"] = f"{z:.2f}" if abs(z) <= zscore_threshold else f"🔴{z:.2f}"
                             else:
-                                row[f"{band}(SP)"] = "N/A"
+                                row[f"{band}正常范围(SP)"] = "N/A"
+                                row[f"{band} Z(SP)"] = "N/A"
                     summary_data.append(row)
                 
                 # 显示汇总表格
@@ -1568,7 +1809,146 @@ def main():
                         )
                         st.plotly_chart(fig_asym, width="stretch")
             
-             # ========== 导出 Excel（三种导联类型、含频段Z-score、诊断表）==========
+            # ========== Beta 不对称指数（单独区域）==========
+            st.divider()
+            st.subheader("🧠 Beta 不对称指数")
+            
+            beta_asymmetry_pairs = []
+            if "耳电极" in lead_type:
+                beta_asymmetry_pairs = [("F3/F4 额叶", "F3-A1", "F4-A2", "E__F3_F4_B"), ("F7/F8 前颞叶", "F7-A1", "F8-A2", "E__F7_F8_B")]
+            elif "平均" in lead_type:
+                beta_asymmetry_pairs = [("F3/F4 额叶", "F3-AVG", "F4-AVG", "A__F3_F4_B"), ("F7/F8 前颞叶", "F7-AVG", "F8-AVG", "A__F7_F8_B")]
+            else:
+                beta_asymmetry_pairs = [("F3/F4 额叶", "F3-C3", "F4-C4", "B__F3_F4_B"), ("F7/F8 前颞叶", "F7-T3", "F8-T4", "B__F7_F8_B")]
+            
+            beta_cols = st.columns(len(beta_asymmetry_pairs))
+            beta_asymmetry_series_dict = {}
+            
+            for idx, (name, left_lead, right_lead, ref_key) in enumerate(beta_asymmetry_pairs):
+                with beta_cols[idx]:
+                    # 计算时序
+                    asymmetry_series = calculate_beta_asymmetry_series(spec_dict_all, left_lead, right_lead)
+                    beta_asymmetry_series_dict[name] = (asymmetry_series, left_lead, right_lead, ref_key)
+                    
+                    # 计算平均值用于卡片显示
+                    asymmetry_val = np.mean(asymmetry_series) if asymmetry_series is not None and len(asymmetry_series) > 0 else None
+                    
+                    if asymmetry_val is not None and enable_zscore and all_ref_data:
+                        normal_mean, normal_std = get_asymmetry_ref(all_ref_data, selected_age_group, ref_key)
+                        if normal_mean is not None and normal_std is not None and normal_std > 0:
+                            z = (asymmetry_val - normal_mean) / normal_std
+                            icon = "🔴" if abs(z) > zscore_threshold else "🟢"
+                            st.metric(name, f"{asymmetry_val:.3f}", f"Z={z:.2f} {icon}")
+                        else:
+                            st.metric(name, f"{asymmetry_val:.3f}")
+                    elif asymmetry_val is not None:
+                        st.metric(name, f"{asymmetry_val:.3f}")
+                    else:
+                        st.metric(name, "N/A")
+            
+            # 时序图
+            if "📈 时序图" in zscore_viz_options:
+                st.markdown("#### Beta 不对称指数时序图")
+                for name, (asymmetry_series, left_lead, right_lead, ref_key) in beta_asymmetry_series_dict.items():
+                    if asymmetry_series is not None and len(asymmetry_series) > 0:
+                        epochs = list(range(len(asymmetry_series)))
+                        fig_asym = go.Figure()
+                        fig_asym.add_trace(go.Scatter(
+                            x=epochs, y=asymmetry_series,
+                            mode='lines', name=name.split(' ')[0],
+                            line=dict(width=1.5, color='#e67e22')
+                        ))
+                        fig_asym.add_hline(y=0, line_dash="solid", line_color="gray")
+                        
+                        if enable_zscore and all_ref_data:
+                            normal_mean, normal_std = get_asymmetry_ref(all_ref_data, selected_age_group, ref_key)
+                            if normal_mean is not None and normal_std is not None:
+                                fig_asym.add_hline(y=normal_mean, line_dash="solid", line_color="green", annotation_text="正常均值")
+                                upper = normal_mean + zscore_threshold * normal_std
+                                lower = normal_mean - zscore_threshold * normal_std
+                                fig_asym.add_hline(y=upper, line_dash="dash", line_color="red", annotation_text=f"+{zscore_threshold}σ")
+                                fig_asym.add_hline(y=lower, line_dash="dash", line_color="red", annotation_text=f"-{zscore_threshold}σ")
+                        
+                        fig_asym.update_layout(
+                            title=dict(text=f"<b>{name}</b> Beta 不对称指数时序图", x=0.5),
+                            xaxis_title="Epoch", yaxis_title="Beta Asymmetry Index",
+                            height=250
+                        )
+                        st.plotly_chart(fig_asym, width="stretch")
+
+            # ========== 5. 前后梯度（AP）==========
+            st.divider()
+            st.subheader("📊 前后梯度（AP）")
+            
+            # 定义各导联类型对应的前后部导联映射
+            ap_band_keys = [('delta', 'δ (1-4Hz)'), ('theta', 'θ (4-8Hz)'), ('alpha', 'α (8-13Hz)'), ('beta', 'β (13-30Hz)')]
+            
+            if "耳电极" in lead_type:
+                ap_anterior_leads = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2"]
+                ap_posterior_leads = ["P3-A1", "P4-A2", "O1-A1", "O2-A2"]
+                ap_montage_prefix = "E"
+            elif "平均" in lead_type:
+                ap_anterior_leads = ["Fp1-AVG", "Fp2-AVG", "F3-AVG", "F4-AVG", "F7-AVG", "F8-AVG"]
+                ap_posterior_leads = ["P3-AVG", "P4-AVG", "Pz-AVG", "O1-AVG", "O2-AVG"]
+                ap_montage_prefix = "A"
+            else:
+                ap_anterior_leads = ["Fp1-F3", "Fp2-F4", "F3-C3", "F4-C4", "F7-T3", "F8-T4"]
+                ap_posterior_leads = ["P3-O1", "P4-O2", "Pz-Oz"]
+                ap_montage_prefix = "B"
+            
+            # 检查是否有足够的导联用于AP计算
+            available_ant = [l for l in ap_anterior_leads if l in spec_dict_all]
+            available_pos = [l for l in ap_posterior_leads if l in spec_dict_all]
+            
+            if len(available_ant) >= 2 and len(available_pos) >= 2:
+                ap_cols = st.columns(len(ap_band_keys))
+                ap_data = {}
+                
+                for idx, (band_key, band_label) in enumerate(ap_band_keys):
+                    with ap_cols[idx]:
+                        ap_val = calculate_ap_gradient(spec_dict_all, band_key, available_ant, available_pos)
+                        ap_data[band_key] = ap_val
+                        
+                        if ap_val is not None and enable_zscore and all_ref_data:
+                            ap_ref_key = f"{ap_montage_prefix}__AP_{band_key}"
+                            norm_mean, norm_std = get_ap_ref(all_ref_data, selected_age_group, ap_ref_key)
+                            if norm_mean is not None and norm_std is not None and norm_std > 0:
+                                z = (ap_val - norm_mean) / norm_std
+                                icon = "🔴" if abs(z) > zscore_threshold else "🟢"
+                                st.metric(band_label, f"{ap_val:.4f}", f"Z={z:.2f} {icon}")
+                            else:
+                                st.metric(band_label, f"{ap_val:.4f}", "常模N/A")
+                        elif ap_val is not None:
+                            st.metric(band_label, f"{ap_val:.4f}")
+                        else:
+                            st.metric(band_label, "N/A")
+                
+                # AP时序图
+                if "📈 时序图" in zscore_viz_options:
+                    st.markdown("#### 前后梯度（AP）时序图")
+                    fig_ap = go.Figure()
+                    colors = {'delta': '#e74c3c', 'theta': '#f1c40f', 'alpha': '#27ae60', 'beta': '#3498db'}
+                    for band_key, band_label in ap_band_keys:
+                        ap_series = calculate_ap_gradient_series(spec_dict_all, band_key, available_ant, available_pos)
+                        if ap_series is not None and len(ap_series) > 0:
+                            epochs = list(range(len(ap_series)))
+                            fig_ap.add_trace(go.Scatter(
+                                x=epochs, y=ap_series,
+                                mode='lines', name=band_label.split(' ')[0],
+                                line=dict(width=1.5, color=colors.get(band_key, '#888888'))
+                            ))
+                    fig_ap.add_hline(y=0, line_dash="solid", line_color="gray")
+                    fig_ap.update_layout(
+                        title=dict(text="<b>前后梯度（AP）</b> 各频段时序图", x=0.5),
+                        xaxis_title="Epoch", yaxis_title="AP Index",
+                        height=300,
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig_ap, width="stretch")
+            else:
+                st.info(f"当前导联类型（{lead_type}）可用于AP计算的导联不足（前部{len(available_ant)}个/后部{len(available_pos)}个），跳过AP显示")
+            
+            # ========== 导出 Excel（三种导联类型、含频段Z-score、诊断表）==========
             st.divider()
             st.subheader("📥 导出数据")
             
@@ -1649,9 +2029,17 @@ def main():
                 return None, rm, rs
             
             def _zscore_for_lead_sp(lead, band_key, val, _srd, _virt_leads, _grp_virtual):
-                """使用 SP 参照值计算 Z-score，返回 (z_value, ref_mean, ref_std)"""
+                """使用 SP 参照值计算 Z-score，返回 (z_value, ref_mean, ref_std)
+                
+                注意：SP 参考数据仅包含耳电极导联 (-A1/-A2)，
+                虚拟组通过聚合其成员（耳电极）的 SP 值计算。
+                """
                 if _srd is None:
                     return None, None, None
+                if lead not in _virt_leads:
+                    # 非虚拟导联：仅支持耳电极
+                    if not (lead.endswith('-A1') or lead.endswith('-A2')):
+                        return None, None, None
                 if lead not in _virt_leads:
                     rm = get_sp_ref(_srd, band_key, lead, 'mean')
                     rs = get_sp_ref(_srd, band_key, lead, 'std')
@@ -1669,8 +2057,8 @@ def main():
                     return (val - rm) / rs, rm, rs
                 return None, rm, rs
             
-            def _build_export_spec(montage_dict, type_label, lead_opts, left_l, right_l, ec, fs_val, np_len, art_th, prob):
-                """为一种导联类型构建 spec_dict 和虚拟组"""
+            def _build_export_spec(montage_dict, type_label, lead_opts, region_groups_dict, left_l, right_l, ec, fs_val, np_len, art_th, prob):
+                """为一种导联类型构建 spec_dict 和虚拟组（含脑区组）"""
                 def _flt(name):
                     if "耳电极" in type_label:
                         return name.endswith('-A1') or name.endswith('-A2')
@@ -1678,12 +2066,19 @@ def main():
                         return name.endswith('-AVG')
                     else:
                         return '-A1' not in name and '-A2' not in name and '-AVG' not in name
-                sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob, st.session_state.get('art_fallback_mode', '保留原始数据'))
+                # 优先使用主分析中已计算好的结果，避免重复计算PSD
+                existing_spec = results.get('spec_dict_all', {})
+                flt_lead_names = [k for k in montage_dict if _flt(k)]
+                if flt_lead_names and all(l in existing_spec for l in flt_lead_names):
+                    sd = {lead: existing_spec[lead].copy() for lead in flt_lead_names}
+                else:
+                    sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob, st.session_state.get('art_fallback_mode', '保留原始数据'))
                 grp_v = {
                     "🧠 全脑 (均值)": lead_opts,
                     "🧠 左脑 L (均值)": left_l,
                     "🧠 右脑 R (均值)": right_l,
                 }
+                grp_v.update(region_groups_dict)
                 for vn, gl in grp_v.items():
                     gli = [l for l in gl if l in sd]
                     if not gli:
@@ -1703,13 +2098,13 @@ def main():
                 fm_dict = leads_montage_dict
             
             TYPE_CONFIGS = [
-                ("双极导联 (Bipolar)", bipolar_leads,
+                ("双极导联 (Bipolar)", bipolar_leads, BIPOLAR_REGION_GROUPS,
                  [l for l in bipolar_leads if _is_left_lead(l)],
                  [l for l in bipolar_leads if _is_right_lead(l)]),
-                ("耳电极参考 (Ear)", ear_leads,
+                ("耳电极参考 (Ear)", ear_leads, EAR_REGION_GROUPS,
                  [l for l in ear_leads if _is_left_lead(l)],
                  [l for l in ear_leads if _is_right_lead(l)]),
-                ("平均参考 (Average)", avg_leads,
+                ("平均参考 (Average)", avg_leads, AVG_REGION_GROUPS,
                  [l for l in avg_leads if _is_left_lead(l)],
                  [l for l in avg_leads if _is_right_lead(l)]),
             ]
@@ -1717,9 +2112,12 @@ def main():
             def generate_export_excel(_ez, _ard, _age, _zth, _duration_sec, _sfreq, _srd=None, _ref_src="常模 (Normal_Reference)"):
                 """生成导出Excel（三种导联类型，含Z-score和诊断）"""
                 # 导出时始终计算所有可用的参考值，不受界面选择限制
-                # 如果常模数据未传入（比如从旧 session 恢复），重新加载
-                if _ez and _ard is None:
-                    _ard = load_normal_reference_data(None)
+                # 如果常模/SP数据未传入（比如从旧 session 恢复），重新加载
+                if _ez:
+                    if _ard is None:
+                        _ard = load_normal_reference_data(None)
+                    if _srd is None:
+                        _srd = load_sp_reference_data()
                 _has_sp = _srd is not None
                 _has_norm = _ard is not None
                 buf = BytesIO()
@@ -1742,22 +2140,23 @@ def main():
                     ("relative_gamma", "相对γ"),
                 ]
                 _data_key_to_ref = {"DT_AR": "DTAR"}
-                _VTL = {"🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"}
                 all_rows = []
                 ec = results.get('epoch_count', int(_duration_sec / epoch_len_sec))
                 fs_val = results.get('fs', int(_sfreq))
                 np_len = results.get('nperseg_len', nperseg_len)
                 art_th = results.get('art_threshold', art_threshold)
                 prob = results.get('prob_dict')
-                
-                for type_idx, (type_label, lead_opts, left_l, right_l) in enumerate(TYPE_CONFIGS):
+
+                for type_idx, (type_label, lead_opts, region_groups_dict, left_l, right_l) in enumerate(TYPE_CONFIGS):
                     if type_idx > 0:
                         all_rows.append({})
                     sd_local, grp_v_local = _build_export_spec(
-                        fm_dict, type_label, lead_opts, left_l, right_l,
+                        fm_dict, type_label, lead_opts, region_groups_dict, left_l, right_l,
                         ec, fs_val, np_len, art_th, prob
                     )
-                    exp_leads = lead_opts + ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"]
+                    _virtual_brain_regions = ["🧠 全脑 (均值)", "🧠 左脑 L (均值)", "🧠 右脑 R (均值)"] + list(region_groups_dict.keys())
+                    _VTL = set(_virtual_brain_regions)
+                    exp_leads = lead_opts + _virtual_brain_regions
                     valid_l = [l for l in exp_leads if l in sd_local]
                     for lead in valid_l:
                         sd = sd_local[lead]
@@ -1766,55 +2165,142 @@ def main():
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            # 常模 Z
+                            # 常模正常范围 + Z
                             if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
+                                if rm is not None and rs is not None and rs > 0:
+                                    low = rm - _zth * rs
+                                    high = rm + _zth * rs
+                                    row[f"{label} 正常范围"] = f"[{low:.4f}, {high:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = "N/A"
-                            # SP 参照 Z
+                            # SP 参照正常范围 + Z
                             if _ez and _has_sp:
-                                z_sp, _, _ = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                z_sp, rm_sp, rs_sp = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                if rm_sp is not None and rs_sp is not None and rs_sp > 0:
+                                    low_sp = rm_sp - _zth * rs_sp
+                                    high_sp = rm_sp + _zth * rs_sp
+                                    row[f"{label} 正常范围(SP)"] = f"[{low_sp:.4f}, {high_sp:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = "N/A"
                         for key, label in ratio_cols:
                             ref_key = _data_key_to_ref.get(key, key)
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            # 常模 Z
+                            # 常模正常范围 + Z
                             if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, ref_key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
+                                if rm is not None and rs is not None and rs > 0:
+                                    low = rm - _zth * rs
+                                    high = rm + _zth * rs
+                                    row[f"{label} 正常范围"] = f"[{low:.4f}, {high:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = "N/A"
-                            # SP 参照 Z
+                            # SP 参照正常范围 + Z
                             if _ez and _has_sp:
-                                z_sp, _, _ = _zscore_for_lead_sp(lead, ref_key, val, _srd, _VTL, grp_v_local)
+                                z_sp, rm_sp, rs_sp = _zscore_for_lead_sp(lead, ref_key, val, _srd, _VTL, grp_v_local)
+                                if rm_sp is not None and rs_sp is not None and rs_sp > 0:
+                                    low_sp = rm_sp - _zth * rs_sp
+                                    high_sp = rm_sp + _zth * rs_sp
+                                    row[f"{label} 正常范围(SP)"] = f"[{low_sp:.4f}, {high_sp:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = "N/A"
                         for key, label in rel_cols:
                             v = sd.get(key)
                             val = float(np.mean(v)) if v is not None and len(v) > 0 else None
                             row[label] = f"{val:.4f}" if val is not None else "N/A"
-                            # 常模 Z
+                            # 常模正常范围 + Z
                             if _ez and _has_norm:
                                 z, rm, rs = _zscore_for_lead(lead, key, val, _ard, _age, _VTL, grp_v_local, window_sizes)
+                                if rm is not None and rs is not None and rs > 0:
+                                    low = rm - _zth * rs
+                                    high = rm + _zth * rs
+                                    row[f"{label} 正常范围"] = f"[{low:.4f}, {high:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = f"{z:.2f}" if z is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围"] = "N/A"
                                 row[f"{label} Z"] = "N/A"
-                            # SP 参照 Z
+                            # SP 参照正常范围 + Z
                             if _ez and _has_sp:
-                                z_sp, _, _ = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                z_sp, rm_sp, rs_sp = _zscore_for_lead_sp(lead, key, val, _srd, _VTL, grp_v_local)
+                                if rm_sp is not None and rs_sp is not None and rs_sp > 0:
+                                    low_sp = rm_sp - _zth * rs_sp
+                                    high_sp = rm_sp + _zth * rs_sp
+                                    row[f"{label} 正常范围(SP)"] = f"[{low_sp:.4f}, {high_sp:.4f}]"
+                                else:
+                                    row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = f"{z_sp:.2f}" if z_sp is not None else "N/A"
                             else:
+                                row[f"{label} 正常范围(SP)"] = "N/A"
                                 row[f"{label} Z(SP)"] = "N/A"
                         total_v = sd.get("DT_total_R")
                         row["总功率"] = f"{np.mean(total_v):.4f}" if total_v is not None and len(total_v) > 0 else "N/A"
                         all_rows.append(row)
-                
+
+                    # 前后梯度（AP）计算——为当前导联类型添加AP结果行
+                    if type_label == "双极导联 (Bipolar)":
+                        ap_ant = ["Fp1-F3", "Fp2-F4", "F3-C3", "F4-C4", "F7-T3", "F8-T4"]
+                        ap_pos = ["P3-O1", "P4-O2", "Pz-Oz"]
+                        ap_prefix = "B"
+                    elif "耳电极" in type_label:
+                        ap_ant = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2"]
+                        ap_pos = ["P3-A1", "P4-A2", "O1-A1", "O2-A2"]
+                        ap_prefix = "E"
+                    else:
+                        ap_ant = ["Fp1-AVG", "Fp2-AVG", "F3-AVG", "F4-AVG", "F7-AVG", "F8-AVG"]
+                        ap_pos = ["P3-AVG", "P4-AVG", "Pz-AVG", "O1-AVG", "O2-AVG"]
+                        ap_prefix = "A"
+
+                    avail_ant = [l for l in ap_ant if l in sd_local]
+                    avail_pos = [l for l in ap_pos if l in sd_local]
+
+                    if len(avail_ant) >= 2 and len(avail_pos) >= 2:
+                        ap_bands = ["delta", "theta", "alpha", "beta"]
+                        for ap_key in ap_bands:
+                            ap_val = calculate_ap_gradient(sd_local, ap_key, avail_ant, avail_pos)
+                            if ap_val is not None:
+                                ant_power = np.mean([np.mean(sd_local[l].get(ap_key, [0]))
+                                                     for l in avail_ant if sd_local[l].get(ap_key) is not None])
+                                pos_power = np.mean([np.mean(sd_local[l].get(ap_key, [0]))
+                                                     for l in avail_pos if sd_local[l].get(ap_key) is not None])
+                                ap_row = {
+                                    "导联": f"AP_{ap_key}",
+                                    "导联类型": type_label,
+                                    f"前部功率_{ap_key}": f"{ant_power:.4f}",
+                                    f"后部功率_{ap_key}": f"{pos_power:.4f}",
+                                    f"AP_{ap_key}": f"{ap_val:.4f}",
+                                }
+                                if _ez and _has_norm:
+                                    ap_ref_key = f"{ap_prefix}__AP_{ap_key}"
+                                    ap_mean, ap_std = get_ap_ref(_ard, _age, ap_ref_key)
+                                    if ap_mean is not None and ap_std is not None and ap_std > 0:
+                                        z_ap = (ap_val - ap_mean) / ap_std
+                                        ap_row[f"Z_AP_{ap_key}"] = f"{z_ap:.4f}"
+                                    else:
+                                        ap_row[f"Z_AP_{ap_key}"] = "N/A"
+                                else:
+                                    ap_row[f"Z_AP_{ap_key}"] = "N/A"
+                                all_rows.append(ap_row)
+
                 with pd.ExcelWriter(buf, engine='openpyxl') as writer:
                     if all_rows:
                         pd.DataFrame(all_rows).to_excel(writer, sheet_name="频段功率与比率", index=False)

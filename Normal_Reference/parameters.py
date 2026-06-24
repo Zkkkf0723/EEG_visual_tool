@@ -246,7 +246,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
             "T6-O2": butter_bandpass_filter(lead_dict["T6"] - lead_dict["O2"], low_cut=0.8, high_cut=35, fs=256),
 
             "Fpz-Fz": butter_bandpass_filter(lead_dict["Fpz"] - lead_dict["Fz"], low_cut=0.8, high_cut=35, fs=256),
-            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Cz"], low_cut=0.8, high_cut=35, fs=256),
+            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Cz-Pz": butter_bandpass_filter(lead_dict["Cz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Pz-Oz": butter_bandpass_filter(lead_dict["Pz"] - lead_dict["Oz"], low_cut=0.8, high_cut=35, fs=256),
 
@@ -314,7 +314,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
             "T6-O2": butter_bandpass_filter(lead_dict["T6"] - lead_dict["O2"], low_c, high_c, fs=256),
 
             "Fpz-Fz": butter_bandpass_filter(lead_dict["Fpz"] - lead_dict["Fz"], low_c, high_c, fs=256),
-            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Cz"], low_c, high_c, fs=256),
+            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Pz"], low_c, high_c, fs=256),
             "Cz-Pz": butter_bandpass_filter(lead_dict["Cz"] - lead_dict["Pz"], low_c, high_c, fs=256),
             "Pz-Oz": butter_bandpass_filter(lead_dict["Pz"] - lead_dict["Oz"], low_c, high_c, fs=256),
 

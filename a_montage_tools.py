@@ -193,7 +193,7 @@ RIGHT_LEADS_LIST_AVG_16 = ['Fp2-AV', 'F4-AV', 'C4-AV', 'P4-AV', 'O2-AV',  'F8-AV
 
 LEFT_LEADS_LIST = ['Fp1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'Fp1-F7', 'F7-T3', 'T3-T5', 'T5-O1']
 RIGHT_LEADS_LIST = ['Fp2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'Fp2-F8',  'F8-T4', 'T4-T6', 'T6-O2']
-Z_AREA_LIST = ["Fpz-Fz","Fz-Cz","Cz-Pz","Pz-Oz"]
+Z_AREA_LIST = ["Fpz-Fz","Fz-Pz","Cz-Pz","Pz-Oz"]
 
 # F_LEADS_LIST = ['Fp1-F3','Fp2-F4','Fp1-F7', 'Fp2-F8']
 # C_LEADS_LIST = ['C3-P3', 'F3-C3','C4-P4', 'F4-C4']
@@ -601,7 +601,7 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
     T4 = get_ch("T4")
     T6 = get_ch("T6")
     _midline_available = {}
-    for _mch in ["FZ", "CZ", "PZ"]:
+    for _mch in ["FZ", "CZ", "PZ", "OZ"]:
         try:
             _midline_available[_mch] = get_ch(_mch)
         except KeyError:
@@ -609,6 +609,7 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
     FZ = _midline_available.get("FZ")
     CZ = _midline_available.get("CZ")
     PZ = _midline_available.get("PZ")
+    OZ = _midline_available.get("OZ")
     
     if has_avg_suffix:
         A1 = (Fp1+F3+C3+P3+O1+F7+T3+T5)/8
@@ -677,14 +678,13 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
         "T5-AVG": butter_bandpass_filter(T5, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T6-AVG": butter_bandpass_filter(T6, low_cut= l_cut, high_cut=h_cut, fs=256),
     }
-    
     # 中线电极导联（可选，如果电极不存在则跳过）
-    if FZ is not None and CZ is not None:
-        out_dict["Fz-Pz"] = butter_bandpass_filter(FZ - CZ, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if FZ is not None and PZ is not None:
+        out_dict["Fz-Pz"] = butter_bandpass_filter(FZ - PZ, low_cut=l_cut, high_cut=h_cut, fs=256)
     if CZ is not None and PZ is not None:
         out_dict["Cz-Pz"] = butter_bandpass_filter(CZ - PZ, low_cut=l_cut, high_cut=h_cut, fs=256)
-    if PZ is not None:
-        out_dict["Pz-Oz"] = butter_bandpass_filter(PZ - (O1+O2)/2, low_cut=l_cut, high_cut=h_cut, fs=256)
+    if PZ is not None and OZ is not None:
+        out_dict["Pz-Oz"] = butter_bandpass_filter(PZ - OZ, low_cut=l_cut, high_cut=h_cut, fs=256)
     if FZ is not None:
         out_dict["Fz-AVG"] = butter_bandpass_filter(FZ, low_cut=l_cut, high_cut=h_cut, fs=256)
     if CZ is not None:
@@ -1041,7 +1041,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
             "T5-O1": butter_bandpass_filter(lead_dict["T5"] - lead_dict["O1"], low_cut=0.8, high_cut=35, fs=256),
             "T6-O2": butter_bandpass_filter(lead_dict["T6"] - lead_dict["O2"], low_cut=0.8, high_cut=35, fs=256),
             "Fpz-Fz": butter_bandpass_filter(lead_dict["Fpz"] - lead_dict["Fz"], low_cut=0.8, high_cut=35, fs=256),
-            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Cz"], low_cut=0.8, high_cut=35, fs=256),
+            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Cz-Pz": butter_bandpass_filter(lead_dict["Cz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Pz-Oz": butter_bandpass_filter(lead_dict["Pz"] - lead_dict["Oz"], low_cut=0.8, high_cut=35, fs=256),
         }
@@ -1083,7 +1083,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
             "T6-O2": butter_bandpass_filter(lead_dict["T6"] - lead_dict["O2"], low_cut=0.8, high_cut=35, fs=256),
 
             "Fpz-Fz": butter_bandpass_filter(lead_dict["Fpz"] - lead_dict["Fz"], low_cut=0.8, high_cut=35, fs=256),
-            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Cz"], low_cut=0.8, high_cut=35, fs=256),
+            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Cz-Pz": butter_bandpass_filter(lead_dict["Cz"] - lead_dict["Pz"], low_cut=0.8, high_cut=35, fs=256),
             "Pz-Oz": butter_bandpass_filter(lead_dict["Pz"] - lead_dict["Oz"], low_cut=0.8, high_cut=35, fs=256),
 
@@ -1151,7 +1151,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
             "T6-O2": butter_bandpass_filter(lead_dict["T6"] - lead_dict["O2"], low_c, high_c, fs=256),
 
             "Fpz-Fz": butter_bandpass_filter(lead_dict["Fpz"] - lead_dict["Fz"], low_c, high_c, fs=256),
-            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Cz"], low_c, high_c, fs=256),
+            "Fz-Pz": butter_bandpass_filter(lead_dict["Fz"] - lead_dict["Pz"], low_c, high_c, fs=256),
             "Cz-Pz": butter_bandpass_filter(lead_dict["Cz"] - lead_dict["Pz"], low_c, high_c, fs=256),
             "Pz-Oz": butter_bandpass_filter(lead_dict["Pz"] - lead_dict["Oz"], low_c, high_c, fs=256),
 
