@@ -678,6 +678,14 @@ def get_bipolar_data_caueeg(in_eeg_dict,l_cut= 0.5,h_cut=70):
         "T5-AVG": butter_bandpass_filter(T5, low_cut= l_cut, high_cut=h_cut, fs=256),
         "T6-AVG": butter_bandpass_filter(T6, low_cut= l_cut, high_cut=h_cut, fs=256),
     }
+    # 中线电极 AV 参考（AV = (A1 + A2) / 2），仅在中线电极存在时计算
+    _AV = (A1 + A2) / 2
+    if FZ is not None:
+        out_dict["Fz-AV"] = butter_bandpass_filter(FZ - _AV, l_cut, h_cut, fs=256)
+    if CZ is not None:
+        out_dict["Cz-AV"] = butter_bandpass_filter(CZ - _AV, l_cut, h_cut, fs=256)
+    if PZ is not None:
+        out_dict["Pz-AV"] = butter_bandpass_filter(PZ - _AV, l_cut, h_cut, fs=256)
     # 中线电极导联（可选，如果电极不存在则跳过）
     if FZ is not None and PZ is not None:
         out_dict["Fz-Pz"] = butter_bandpass_filter(FZ - PZ, low_cut=l_cut, high_cut=h_cut, fs=256)

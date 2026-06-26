@@ -21,6 +21,9 @@ ear_keys = [
     "T4-A2",
     "T5-A1",
     "T6-A2",
+    "Fz-AV",
+    "Cz-AV",
+    "Pz-AV",
 ]
 
 #

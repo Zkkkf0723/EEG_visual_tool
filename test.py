@@ -672,7 +672,8 @@ def main():
         ear_leads = [
             'Fp1-A1', 'Fp2-A2', 'F3-A1', 'F4-A2', 'C3-A1', 'C4-A2',
             'P3-A1', 'P4-A2', 'O1-A1', 'O2-A2', 'F7-A1', 'F8-A2',
-            'T3-A1', 'T4-A2', 'T5-A1', 'T6-A2'
+            'T3-A1', 'T4-A2', 'T5-A1', 'T6-A2',
+            'Fz-AV', 'Cz-AV', 'Pz-AV',
         ]
         bipolar_leads = [
             'Fp1-F3', 'Fp2-F4', 'F3-C3', 'F4-C4', 'C3-P3', 'C4-P4',
@@ -712,15 +713,16 @@ def main():
 
         # ========== 脑区划分导联组定义 ==========
         EAR_REGION_GROUPS = {
-            "🧠 前额区": ["Fp1-A1", "Fp2-A2"],
+            "🧠 前额区": ["Fp1-A1", "Fp2-A2", "Fz-AV"],
             "🧠 额中央区": ["F3-A1", "F4-A2"],
-            "🧠 中央区": ["C3-A1", "C4-A2"],
-            "🧠 顶枕区": ["P3-A1", "P4-A2", "O1-A1", "O2-A2"],
+            "🧠 中央区": ["C3-A1", "C4-A2", "Cz-AV"],
+            "🧠 顶枕区": ["P3-A1", "P4-A2", "Pz-AV", "O1-A1", "O2-A2"],
             "🧠 颞区": ["F7-A1", "F8-A2", "T3-A1", "T4-A2", "T5-A1", "T6-A2"],
+            "🧠 中线区": ["Fz-AV", "Cz-AV", "Pz-AV"],
             "🧠 左半球": ["Fp1-A1", "F3-A1", "C3-A1", "P3-A1", "O1-A1", "T3-A1", "T5-A1"],
             "🧠 右半球": ["Fp2-A2", "F4-A2", "C4-A2", "P4-A2", "O2-A2", "T4-A2", "T6-A2"],
-            "🧠 前部脑区": ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2"],
-            "🧠 后部脑区": ["P3-A1", "P4-A2", "O1-A1", "O2-A2"],
+            "🧠 前部脑区": ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2", "Fz-AV"],
+            "🧠 后部脑区": ["P3-A1", "P4-A2", "Pz-AV", "O1-A1", "O2-A2"],
         }
         BIPOLAR_REGION_GROUPS = {
             "🧠 前额区": ["Fp1-F3", "Fp2-F4"],
@@ -896,7 +898,7 @@ def main():
                         st.warning("⚠️ 自动伪迹检测不可用，将不使用伪迹过滤")
                 # 过滤当前选中类型用于显示
                 if "耳电极" in lead_type:
-                    leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-A1') or k.endswith('-A2')}
+                    leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-A1') or k.endswith('-A2') or k.endswith('-AV')}
                 elif "平均" in lead_type:
                     leads_montage_dict = {k: v for k, v in full_montage_dict.items() if k.endswith('-AVG')}
                 else:
@@ -1884,8 +1886,8 @@ def main():
             ap_band_keys = [('delta', 'δ (1-4Hz)'), ('theta', 'θ (4-8Hz)'), ('alpha', 'α (8-13Hz)'), ('beta', 'β (13-30Hz)')]
             
             if "耳电极" in lead_type:
-                ap_anterior_leads = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2"]
-                ap_posterior_leads = ["P3-A1", "P4-A2", "O1-A1", "O2-A2"]
+                ap_anterior_leads = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2", "Fz-AV"]
+                ap_posterior_leads = ["P3-A1", "P4-A2", "Pz-AV", "O1-A1", "O2-A2"]
                 ap_montage_prefix = "E"
             elif "平均" in lead_type:
                 ap_anterior_leads = ["Fp1-AVG", "Fp2-AVG", "F3-AVG", "F4-AVG", "F7-AVG", "F8-AVG"]
@@ -2038,7 +2040,7 @@ def main():
                     return None, None, None
                 if lead not in _virt_leads:
                     # 非虚拟导联：仅支持耳电极
-                    if not (lead.endswith('-A1') or lead.endswith('-A2')):
+                    if not (lead.endswith('-A1') or lead.endswith('-A2') or lead.endswith('-AV')):
                         return None, None, None
                 if lead not in _virt_leads:
                     rm = get_sp_ref(_srd, band_key, lead, 'mean')
@@ -2061,11 +2063,11 @@ def main():
                 """为一种导联类型构建 spec_dict 和虚拟组（含脑区组）"""
                 def _flt(name):
                     if "耳电极" in type_label:
-                        return name.endswith('-A1') or name.endswith('-A2')
+                        return name.endswith('-A1') or name.endswith('-A2') or name.endswith('-AV')
                     elif "平均" in type_label:
                         return name.endswith('-AVG')
                     else:
-                        return '-A1' not in name and '-A2' not in name and '-AVG' not in name
+                        return '-A1' not in name and '-A2' not in name and '-AVG' not in name and '-AV' not in name
                 # 优先使用主分析中已计算好的结果，避免重复计算PSD
                 existing_spec = results.get('spec_dict_all', {})
                 flt_lead_names = [k for k in montage_dict if _flt(k)]
@@ -2262,8 +2264,8 @@ def main():
                         ap_pos = ["P3-O1", "P4-O2", "Pz-Oz"]
                         ap_prefix = "B"
                     elif "耳电极" in type_label:
-                        ap_ant = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2"]
-                        ap_pos = ["P3-A1", "P4-A2", "O1-A1", "O2-A2"]
+                        ap_ant = ["Fp1-A1", "Fp2-A2", "F3-A1", "F4-A2", "F7-A1", "F8-A2", "Fz-AV"]
+                        ap_pos = ["P3-A1", "P4-A2", "Pz-AV", "O1-A1", "O2-A2"]
                         ap_prefix = "E"
                     else:
                         ap_ant = ["Fp1-AVG", "Fp2-AVG", "F3-AVG", "F4-AVG", "F7-AVG", "F8-AVG"]
