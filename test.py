@@ -10,6 +10,8 @@ import tempfile
 import pandas as pd
 from io import BytesIO
 from scipy import signal
+from scipy import interpolate as si
+from scipy.special import eval_legendre as _legendre
 from a_montage_tools import *
 from a_psd_stat_tool import *
 from plot_prob_array import plot_probs
@@ -230,9 +232,9 @@ def load_normal_reference_data(json_dir_hash: str):
     """加载正常参考数据（新版 Normal_Reference 格式）"""
     # 尝试多个可能的路径
     possible_paths = [
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Normal_Reference", "normal", "combined_result_0611.json"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "normal", "combined_result_0611.json"),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Normal_Reference", "normal", "combined_result_0611.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Normal_Reference", "normal", "combined_result_0625.json"),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "Normal_Reference", "normal", "combined_result_0625.json"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Normal_Reference", "normal", "combined_result_0625.json"),
     ]
     
     json_path = None
@@ -622,6 +624,149 @@ def get_ap_ref(all_ref_data, age_group, ap_key):
     return None, None
 
 
+# ========== 脑电地形图函数 ==========
+
+def get_ear_electrode_positions():
+    """获取耳电极参考的10-20系统电极位置（归一化坐标，头半径=1）"""
+    return {
+        'Fp1-A1': (-0.30, 0.90), 'Fp2-A2': (0.30, 0.90),
+        'F7-A1': (-0.70, 0.50), 'F8-A2': (0.70, 0.50),
+        'F3-A1': (-0.45, 0.55), 'F4-A2': (0.45, 0.55),
+        'T3-A1': (-0.85, 0.00), 'T4-A2': (0.85, 0.00),
+        'C3-A1': (-0.45, 0.00), 'C4-A2': (0.45, 0.00),
+        'T5-A1': (-0.70,-0.50), 'T6-A2': (0.70,-0.50),
+        'P3-A1': (-0.45,-0.55), 'P4-A2': (0.45,-0.55),
+        'O1-A1': (-0.30,-0.90), 'O2-A2': (0.30,-0.90),
+        'Fz-AV': (0.00, 0.55), 'Cz-AV': (0.00, 0.00), 'Pz-AV': (0.00,-0.55),
+        'Fpz-AV': (0.00, 0.95), 'Oz-AV': (0.00,-0.95),
+    }
+
+
+def get_bipolar_electrode_positions():
+    """获取双极导联的电极位置（取两导联中点作为双极导联位置）"""
+    _p = {
+        'Fp1':(-0.30,0.90),'Fp2':(0.30,0.90),'F7':(-0.70,0.50),'F8':(0.70,0.50),
+        'F3':(-0.45,0.55),'F4':(0.45,0.55),'T3':(-0.85,0.00),'T4':(0.85,0.00),
+        'C3':(-0.45,0.00),'C4':(0.45,0.00),'T5':(-0.70,-0.50),'T6':(0.70,-0.50),
+        'P3':(-0.45,-0.55),'P4':(0.45,-0.55),'O1':(-0.30,-0.90),'O2':(0.30,-0.90),
+        'Fz':(0.00,0.55),'Cz':(0.00,0.00),'Pz':(0.00,-0.55),'Oz':(0.00,-0.95),
+    }
+    _bp = [
+        ('Fp1','F3'),('Fp2','F4'),('F3','C3'),('F4','C4'),('C3','P3'),('C4','P4'),('P3','O1'),('P4','O2'),
+        ('Fp1','F7'),('Fp2','F8'),('F7','T3'),('F8','T4'),('T3','T5'),('T4','T6'),('T5','O1'),('T6','O2'),
+        ('Fz','Pz'),('Cz','Pz'),('Pz','Oz'),
+    ]
+    out = {}
+    for a, b in _bp:
+        if a in _p and b in _p:
+            out[f'{a}-{b}'] = ((_p[a][0]+_p[b][0])/2, (_p[a][1]+_p[b][1])/2)
+    return out
+
+
+def _perrin_spherical_spline(points_2d, values, grid_x, grid_y, n_terms=50, m=4):
+    """Perrin 球面样条插值 (Perrin et al. 1989)
+
+    将 2D 电极坐标投影到半球面，用 Legendre 多项式做球面插值，
+    比平面 griddata 更符合头皮的真实几何形状。
+    """
+    N = len(points_2d)
+    r2 = np.sum(points_2d**2, axis=1)
+    z_elec = np.sqrt(np.maximum(0, 1 - np.minimum(r2, 1.0)))
+    elec_3d = np.column_stack([points_2d, z_elec])
+    cos_ee = np.clip(elec_3d @ elec_3d.T, -1, 1)
+    all_n = np.arange(1, n_terms + 1, dtype=float)
+    coeffs = (2 * all_n + 1) / (all_n * (all_n + 1))**m
+    G = np.zeros((N, N))
+    for n_idx, n_val in enumerate(all_n):
+        G += coeffs[n_idx] * _legendre(int(n_val), cos_ee)
+    G /= (4 * np.pi)
+    w = np.linalg.solve(G + 1e-10 * np.eye(N), values)
+    r2_grid = grid_x**2 + grid_y**2
+    mask = r2_grid <= 1.0
+    z_grid = np.sqrt(np.maximum(0, 1 - r2_grid[mask]))
+    grid_3d = np.column_stack([grid_x[mask], grid_y[mask], z_grid])
+    cos_ge = np.clip(grid_3d @ elec_3d.T, -1, 1)
+    zi_masked = np.zeros(np.sum(mask))
+    for n_idx, n_val in enumerate(all_n):
+        zi_masked += coeffs[n_idx] * (_legendre(int(n_val), cos_ge) @ w)
+    return zi_masked / (4 * np.pi)
+
+
+
+
+
+
+
+def generate_single_topomap(points, values, lead_names, title, unit, z_range=None, z_mode=False, display_names=None):
+    """生成单个频段的头皮地形图 Plotly 图表
+
+    Parameters
+    ----------
+    display_names : list, optional
+        地图上显示的标签列表。为 None 时取 lead_names 中 '-' 前的部分（默认行为）。
+    """
+    colorscale = "Viridis" if not z_mode else "RdBu_r"
+    grid_x, grid_y = np.meshgrid(np.linspace(-1.05, 1.05, 80), np.linspace(-1.05, 1.05, 80))
+    grid_z = np.full(grid_x.shape, np.nan)
+    mask = grid_x**2 + grid_y**2 <= 1.0
+    try:
+        zi = _perrin_spherical_spline(points, values, grid_x, grid_y)
+    except Exception:
+        try:
+            zi = si.griddata(points, values, (grid_x[mask], grid_y[mask]), method='cubic', fill_value=np.nan)
+        except Exception:
+            try:
+                zi = si.griddata(points, values, (grid_x[mask], grid_y[mask]), method='linear', fill_value=np.nan)
+            except Exception:
+                zi = np.full(np.sum(mask), np.nan)
+    # 用最近邻填充NaN栅格，使整个头区域都有颜色
+    if np.any(np.isnan(zi)):
+        try:
+            nn = si.NearestNDInterpolator(points, values)
+            nan_idx = np.isnan(zi)
+            zi[nan_idx] = nn(grid_x[mask][nan_idx], grid_y[mask][nan_idx])
+        except Exception:
+            pass
+    grid_z[mask] = zi
+    vmin, vmax = (np.nanmin(grid_z), np.nanmax(grid_z)) if z_range is None else z_range
+    if np.isnan(vmin) or np.isnan(vmax) or (vmin - vmax) == 0:
+        vmin, vmax = (vmin-0.1, vmax+0.1) if not np.isnan(vmin) else (0, 1)
+    theta = np.linspace(0, 2*np.pi, 200)
+    fig = go.Figure()
+    fig.add_trace(go.Heatmap(x=grid_x.flatten(), y=grid_y.flatten(), z=grid_z.flatten(),
+        colorscale=colorscale, zmin=vmin, zmax=vmax, opacity=0.85, showscale=True,
+        hoverongaps=False, colorbar=dict(title=dict(text=unit, font=dict(size=10)), len=0.7),
+        hovertemplate=f'{unit}: %{{z:.3f}}<extra></extra>'))
+    fig.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines',
+        line=dict(color='#444', width=1.5), showlegend=False, hoverinfo='skip'))
+    fig.add_trace(go.Scatter(x=[0,0.12,0], y=[1.0,1.12,1.0], mode='lines',
+        line=dict(color='#444', width=1.5), showlegend=False, hoverinfo='skip'))
+    hover_texts = [f"{n}: {v:.3f} {unit}" for n, v in zip(lead_names, values)]
+    # 标签：显示完整导联名（双极）或电极名（耳/平均参考）
+    texts = display_names if display_names is not None else [n.split('-')[0] for n in lead_names]
+    text_size = 9 if display_names is not None else 11
+    # 标签：显示完整导联名（双极）或电极名（耳/平均参考）
+    texts = display_names if display_names is not None else [n.split('-')[0] for n in lead_names]
+    text_size = 9 if display_names is not None else 11
+    # 上部电极名称标在上侧，下部电极名称标在下侧
+    text_positions = []
+    for pt in points:
+        if pt[1] > 0:    # 上半球 → 标在点上方
+            text_positions.append('top center')
+        else:            # 下半球 → 标在点下方
+            text_positions.append('bottom center')
+    fig.add_trace(go.Scatter(x=points[:,0], y=points[:,1], mode='markers+text',
+        marker=dict(size=6, color='white', line=dict(color='#333', width=1)),
+        text=texts, textfont=dict(size=text_size, color='#222'),
+        textposition=text_positions, hovertext=hover_texts, hoverinfo='text', showlegend=False))
+    fig.update_layout(title=dict(text=title, x=0.5, font=dict(size=12)),
+        height=280, width=280, margin=dict(l=5,r=5,t=30,b=5),
+        paper_bgcolor='white', plot_bgcolor='white',
+        xaxis=dict(visible=False, range=[-1.15,1.15]),
+        yaxis=dict(visible=False, range=[-1.15,1.15], scaleanchor='x'))
+    return fig
+
+
 # ========== 主程序 ==========
 CODE_VERSION = "v2"  # 代码变更时递增此值以强制清除旧缓存
 
@@ -686,16 +831,25 @@ def main():
             'T3-AVG', 'T4-AVG', 'T5-AVG', 'T6-AVG', 'Fz-AVG', 'Cz-AVG', 'Pz-AVG', 'Fpz-AVG', 'Oz-AVG'
         ]
         
-        # 根据选择显示对应的导联列表
+        # 根据选择显示对应的导联列表（数据计算后动态过滤，只显示实际存在的导联）
         if "耳电极" in lead_type:
             lead_options = ear_leads
             default_leads = ['Fp1-A1', 'F3-A1']
+            if 'available_ear' in st.session_state:
+                lead_options = [l for l in ear_leads if l in st.session_state.available_ear]
+                default_leads = [l for l in default_leads if l in lead_options] or lead_options[:2]
         elif "平均" in lead_type:
             lead_options = avg_leads
             default_leads = ['Fp1-AVG', 'F3-AVG']
+            if 'available_avg' in st.session_state:
+                lead_options = [l for l in avg_leads if l in st.session_state.available_avg]
+                default_leads = [l for l in default_leads if l in lead_options] or lead_options[:2]
         else:
             lead_options = bipolar_leads
             default_leads = ['Fp1-F3', 'F3-C3']
+            if 'available_bip' in st.session_state:
+                lead_options = [l for l in bipolar_leads if l in st.session_state.available_bip]
+                default_leads = [l for l in default_leads if l in lead_options] or lead_options[:2]
         
         # 定义左脑/右脑导联
         def _is_left_lead(name):
@@ -797,6 +951,7 @@ def main():
         'nperseg_len': nperseg_len,
         'art_threshold': art_threshold,
         'art_fallback_mode': st.session_state.get('art_fallback_mode', '保留原始数据'),
+        'lead_type': lead_type,
         'selected_leads': tuple(sorted(selected_leads)),
         'enable_zscore': enable_zscore,
         'selected_age_group': selected_age_group,
@@ -885,6 +1040,13 @@ def main():
                 # 5. 计算完整 montage（始终获取全部三种导联类型）
                 status.update(label="🔗 计算导联数据...")
                 full_montage_dict = get_bipolar_data_caueeg(all_data_normalized, 1.5, 70)
+
+                # 缓存实际可用的导联名，供侧边栏动态过滤
+                st.session_state.available_ear = sorted([k for k in full_montage_dict if k.endswith(('-A1','-A2','-AV'))])
+                st.session_state.available_avg = sorted([k for k in full_montage_dict if k.endswith('-AVG')])
+                st.session_state.available_bip = sorted([k for k in full_montage_dict if '-' in k and not k.endswith(('A1','A2','AV','AVG'))])
+
+
                 
                 
                 # 5b. 如果没有上传Prob文件，自动生成伪迹概率
@@ -1116,7 +1278,7 @@ def main():
                     virt_data[k] = np.mean(stacked, axis=0)
             spec_dict_all[virt_name] = virt_data
         
-        tab1, tab2, tab3 = st.tabs(["📊 频段功率", "📈 功率比率", "📋 统计汇总"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 频段功率", "📈 功率比率", "📋 统计汇总", "🗺️ 地形图"])
         
         with tab1:
             st.subheader("各频段功率分布")
@@ -2339,6 +2501,189 @@ def main():
                     key="dl_excel_btn"
                 )
                 st.caption("已生成：包含双极导联、耳电极参考、平均参考共三种导联类型")
+
+        # ========== 7. 脑电地形图（Tab4）==========
+        with tab4:
+            st.subheader("🗺️ 四频段脑电地形图")
+            topo_mode = st.radio("显示", ["绝对功率","Z值"], horizontal=True, key="topo_mode")
+
+            base_pos = get_ear_electrode_positions()
+            if "双极" in lead_type:
+                pos_map = get_bipolar_electrode_positions()
+            elif "平均" in lead_type:
+                pos_map = {k.replace('-AV','-AVG').replace('-A1','-AVG').replace('-A2','-AVG'):v for k,v in base_pos.items()}
+            else:
+                pos_map = base_pos
+
+            if not spec_dict_all:
+                st.warning("⚠️ 无有效PSD数据")
+            else:
+                # 检测当前数据是否与所选导联类型匹配
+                matched = [l for l in pos_map if l in spec_dict_all]
+                if len(matched) < 3:
+                    # 反向推断实际数据类型
+                    has_ear = any(k.endswith('-A1') or k.endswith('-A2') or k.endswith('-AV') for k in spec_dict_all)
+                    has_bip = any('-' in k and not k.endswith(('A1','A2','AV','AVG')) for k in spec_dict_all)
+                    actual_type = "耳电极参考" if has_ear else ("双极导联" if has_bip else "平均参考")
+                    st.warning(f"⚠️ 当前数据为「{actual_type}」类型，导联名与「{lead_type}」不匹配")
+                    if actual_type != lead_type:
+                        st.info(f"👉 请在左侧导联类型中选择「{actual_type}」，或点击「处理数据」按钮以 {lead_type} 重新计算")
+                else:
+                    topo_bands = [('delta','δ (1-4Hz)'),('theta','θ (4-8Hz)'),('alpha','α (8-13Hz)'),('beta','β (13-30Hz)')]
+                    z_mode = (topo_mode == "Z值")
+                    unit = "Z值" if z_mode else "dB"
+                    plot_cache = {}
+                    for bk, bl in topo_bands:
+                        pts, vals, names = [], [], []
+                        for lead, (px, py) in pos_map.items():
+                            if lead not in spec_dict_all: continue
+                            d = spec_dict_all[lead].get(bk)
+                            if d is None or len(np.atleast_1d(d))==0: continue
+                            mv = float(np.mean(d))
+                            if z_mode:
+                                rm = get_normal_ref(all_ref_data, selected_age_group, bk, lead, 'mean')
+                                rs = get_normal_ref(all_ref_data, selected_age_group, bk, lead, 'std')
+                                if rm is not None and rs is not None and rs > 0:
+                                    mv = (mv - rm)/rs
+                                else: continue
+                            pts.append([px, py]); vals.append(mv); names.append(lead)
+                        if len(vals) >= 3:
+                            plot_cache[bk] = (np.array(pts), np.array(vals), names)
+
+                    if not plot_cache:
+                        if z_mode:
+                            st.info("📊 Z值模式下导联参考数据不足，请切换至「绝对功率」模式或确认数据已重新计算")
+                        else:
+                            st.info("可用导联不足3个，无法生成地形图")
+                    else:
+                        all_v = np.concatenate([v[1] for v in plot_cache.values()])
+                        z_global = (float(np.min(all_v)), float(np.max(all_v)))
+                        cols = st.columns(4)
+                        for idx, (bk, bl) in enumerate(topo_bands):
+                            if bk in plot_cache:
+                                pts, vals, names = plot_cache[bk]
+                                # 双极导联显示完整导联对名（如 Fp1-F3），耳/平均参考只显示电极名
+                                map_labels = names if "双极" in lead_type else None
+                                fig = generate_single_topomap(pts, vals, names, bl, unit, z_global, z_mode, map_labels)
+                                cols[idx].plotly_chart(fig, use_container_width=True, key=f"topo_{bk}_{z_mode}")
+                            else:
+                                cols[idx].warning(bl.split(' ')[0], icon="⚠️")
+
+                        with st.expander("📋 查看详细数值"):
+                            # 从 selected_leads 展开虚拟组为实际导联
+                            def _expand_selected(sel, pos_keys):
+                                leads = set()
+                                for item in sel:
+                                    if item in pos_keys:
+                                        leads.add(item)
+                                    elif item == "🧠 全脑 (均值)":
+                                        leads.update(pos_keys)
+                                    elif item == "🧠 左脑 L (均值)":
+                                        leads.update(l for l in pos_keys if _is_left_lead(l))
+                                    elif item == "🧠 右脑 R (均值)":
+                                        leads.update(l for l in pos_keys if _is_right_lead(l))
+                                    elif item in region_groups:
+                                        leads.update(l for l in region_groups[item] if l in pos_keys)
+                                return sorted(leads)
+                            target_leads = _expand_selected(selected_leads, set(pos_map.keys()))
+                            rows = []
+                            for lead in target_leads:
+                                if lead not in spec_dict_all: continue
+                                r = {"导联": lead}
+                                for bk, bl in topo_bands:
+                                    if bk in plot_cache and lead in plot_cache[bk][2]:
+                                        i = list(plot_cache[bk][2]).index(lead)
+                                        r[bl] = f"{plot_cache[bk][1][i]:.3f}"
+                                    else:
+                                        r[bl] = "N/A"
+                                rows.append(r)
+                            if rows:
+                                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                            elif selected_leads:
+                                st.info("当前勾选的导联不在地形图坐标中（如虚拟组），无详细数值")
+                            else:
+                                st.info("请在左侧勾选导联以查看详细数值")
+
+                    # ========== 新增：数据统计与异常标记 ==========
+                    st.divider()
+                    st.markdown("#### 📊 数据统计与异常标记")
+
+                    # 从 plot_cache 收集所有频段数据
+                    all_vals = []
+                    lv = {}  # {lead: {band_key: value}}
+                    for bk, bl in topo_bands:
+                        if bk not in plot_cache:
+                            continue
+                        _, vals, names = plot_cache[bk]
+                        for i, lead in enumerate(names):
+                            lv.setdefault(lead, {})[bk] = float(vals[i])
+                            all_vals.append(float(vals[i]))
+
+                    if all_vals:
+                        a = np.array(all_vals)
+                        c1, c2, c3, c4, c5 = st.columns(5)
+                        c1.metric("最大Z值" if z_mode else "最大值", f"{np.max(a):.3f}")
+                        c2.metric("最小Z值" if z_mode else "最小值", f"{np.min(a):.3f}")
+                        c3.metric("平均Z值" if z_mode else "平均值", f"{np.mean(a):.3f}")
+                        c4.metric("Z值标准差" if z_mode else "标准差", f"{np.std(a):.3f}")
+                        if z_mode and enable_zscore:
+                            n_ab = sum(
+                                1 for lb in lv.values()
+                                if any(abs(v) > zscore_threshold for v in lb.values())
+                            )
+                            c5.metric("异常导联数", f"{n_ab}/{len(lv)}")
+                        else:
+                            c5.metric("有效导联数", len(lv))
+
+                        st.markdown("#### 📋 各导联数值明细")
+                        if z_mode and enable_zscore:
+                            st.caption(
+                                f"🔴 异常判定标准：|Z| > {zscore_threshold}，异常值以红色标记"
+                            )
+
+                        # 构建明细表格
+                        df_rows = []
+                        for lead in sorted(lv):
+                            r = {"导联": lead}
+                            for bk, bl in topo_bands:
+                                r[bl] = lv[lead].get(bk)
+                            df_rows.append(r)
+                        df = pd.DataFrame(df_rows)
+                        num_cols = [bl for _, bl in topo_bands if bl in df.columns]
+
+                        if z_mode and enable_zscore and len(df) > 0:
+                            # 条件标红：异常 Z 值
+                            def _red(v):
+                                if pd.notna(v) and abs(float(v)) > zscore_threshold:
+                                    return "color:red;font-weight:bold;background:#fff0f0"
+                                return ""
+
+                            try:
+                                styled = df.style.applymap(_red, subset=num_cols).format(
+                                    {c: "{:.3f}" for c in num_cols}
+                                )
+                                st.dataframe(styled, use_container_width=True, hide_index=True)
+                            except Exception:
+                                # fallback：若 Styler 不可用，以文本方式标红
+                                for c in num_cols:
+                                    df[c] = df[c].apply(
+                                        lambda x: f"🔴{x:.3f}"
+                                        if pd.notna(x) and abs(float(x)) > zscore_threshold
+                                        else (f"{x:.3f}" if pd.notna(x) else "N/A")
+                                    )
+                                st.dataframe(df, use_container_width=True, hide_index=True)
+                        else:
+                            for c in num_cols:
+                                df[c] = df[c].apply(
+                                    lambda x: f"{x:.3f}" if pd.notna(x) else "N/A"
+                                )
+                            st.dataframe(df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info(
+                            "📊 Z值模式下参考数据不足，无法统计"
+                            if z_mode
+                            else "📊 导联数据不足，无法统计"
+                        )
 
 if __name__ == "__main__":
     main()

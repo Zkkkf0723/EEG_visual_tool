@@ -120,26 +120,25 @@ def get_prediction(model, x):
 
 #base feature
 def get_feature_dict_by_lead(SPEC_second):
+    # print(np.shape(SPEC_second))
 
-    #_delta = np.mean(SPEC_second[:,:, 1:4], axis=2)
-    _delta = np.mean(SPEC_second[:, 1:4], axis=1)
-    _theta = np.mean(SPEC_second[:, 4:8], axis=1)
-    _alpha = np.mean(SPEC_second[:, 8:13], axis=1)
-    _alpha_1 = np.mean(SPEC_second[:, 8:9], axis=1)
-    _alpha_2 = np.mean(SPEC_second[:, 9:11], axis=1)
-    _alpha_3 = np.mean(SPEC_second[:, 11:13], axis=1)
-    _beta = np.mean(SPEC_second[:, 13:30], axis=1)
-    _beta_1 = np.mean(SPEC_second[:, 13:20], axis=1)
-    _beta_2 = np.mean(SPEC_second[:, 20:30], axis=1)
-
-    _gamma = np.mean(SPEC_second[:, 30:70], axis=1)
-    _gamma_1 = np.mean(SPEC_second[:, 30:50], axis=1)
-    _gamma_2 = np.mean(SPEC_second[:, 50:70], axis=1)
-
+    # _delta = np.mean(SPEC_second[:,:, 1:4], axis=2)
+    _delta = np.sum(SPEC_second[:, :4], axis=1)
+    _theta = np.sum(SPEC_second[:, 4:8], axis=1)
+    _alpha = np.sum(SPEC_second[:, 8:13], axis=1)
+    _alpha_1 = np.sum(SPEC_second[:, 8:9], axis=1)
+    _alpha_2 = np.sum(SPEC_second[:, 9:11], axis=1)
+    _alpha_3 = np.sum(SPEC_second[:, 11:13], axis=1)
+    _beta = np.sum(SPEC_second[:, 13:30], axis=1)
+    _beta_1 = np.sum(SPEC_second[:, 13:20], axis=1)
+    _beta_2 = np.sum(SPEC_second[:, 20:30], axis=1)
+    _gamma = np.sum(SPEC_second[:, 30:70], axis=1)
+    _gamma_1 = np.sum(SPEC_second[:, 30:50], axis=1)
+    _gamma_2 = np.sum(SPEC_second[:, 50:70], axis=1)
 
     _total = _alpha + _theta + _beta + _delta + _gamma + 1e-6
 
-    #print(np.shape(_alpha))
+    # print(np.shape(_alpha))
 
     _r_delta = _delta / _total
     _r_theta = _theta / _total
@@ -150,17 +149,16 @@ def get_feature_dict_by_lead(SPEC_second):
     _r_beta_1 = _beta_1 / _total
     _r_beta_2 = _beta_2 / _total
     _r_gamma = _gamma / _total
-    _r_gamma_1 = _gamma_1/_total
-    _r_gamma_2 = _gamma_2/_total
+    _r_gamma_1 = _gamma_1 / _total
+    _r_gamma_2 = _gamma_2 / _total
 
-    TBR = _theta  / (_beta+1e-6)
-    DAR = _delta  / (_alpha+1e-6)
-    DTR =  _delta / (_theta+1e-6)
-    ABR = _alpha  / (_beta+1e-6)
-    ATR = _alpha  /(_theta+1e-6)
-    DT_AR = (_delta+_theta)/(_alpha+1e-6)
-    DT_total_R = (_delta+_theta)/_total
-
+    TBR = _theta / (_beta + 1e-6)
+    DAR = _delta / (_alpha + 1e-6)
+    DTR = _delta / (_theta + 1e-6)
+    ABR = _alpha / (_beta + 1e-6)
+    ATR = _alpha / (_theta + 1e-6)
+    DT_AR = (_delta + _theta) / (_alpha + 1e-6)
+    DT_total_R = (_delta + _theta) / _total
 
     spec_features_dict = {
         "delta": _delta,
@@ -186,18 +184,29 @@ def get_feature_dict_by_lead(SPEC_second):
         "ABR": ABR,
         "ATR": ATR,
         "DT_AR": DT_AR,
-        "DT_total_R": DT_total_R
+        "DT_total_R": DT_total_R,
+
+        "delta_log1p": np.log1p(_delta),
+        "theta_log1p": np.log1p(_theta),
+        "alpha_log1p": np.log1p(_alpha),
+        "alpha_1_log1p": np.log1p(_alpha_1),
+        "alpha_2_log1p": np.log1p(_alpha_2),
+        "alpha_3_log1p": np.log1p(_alpha_3),
+        "beta_log1p": np.log1p(_beta),
+        "beta_1_log1p": np.log1p(_beta_1),
+        "beta_2_log1p": np.log1p(_beta_2),
+        "gamma_log1p": np.log1p(_gamma),
+        "gamma_1_log1p": np.log1p(_gamma_1),
+        "gamma_2_log1p": np.log1p(_gamma_2),
     }
 
-    out_dict ={}
-
-    #这里去除过NAN
-    for k,v in spec_features_dict.items():
+    out_dict = {}
+    for k, v in spec_features_dict.items():
         clean_arr = v[~np.isnan(v)]
         out_dict[k] = clean_arr
-        #print(k,np.isnan(v).sum(),np.shape(v),np.shape(clean_arr))
+        # print(k,np.isnan(v).sum(),np.shape(v),np.shape(clean_arr))
 
-    return  out_dict
+    return out_dict
 
 #alpha
 def process_alpha(lead_name, threshold, prefix, prob_dict, montage_dict, process_dict, fs):
@@ -358,9 +367,9 @@ def get_psy_zscore(in_eeg_dict, algorithm_para_dict_quantify, result_verbose):
     epoch_len_sec = int(algorithm_para_dict_quantify["process_length"])
     cur_age = int(algorithm_para_dict_quantify["age"])
 
-    age_str = generate_age_epoch_tag(cur_age,epoch_len_sec)+ "_normal_ref_0526"
-
-    # 检查参数
+ 
+    age_str = generate_age_epoch_tag(cur_age,epoch_len_sec)+ "_normal_ref_0625_sum"
+    # 检查参
     if signal_length < 59 * raw_sample_rate: return {}
     if lead_type not in ["EBA"]: return {}
 

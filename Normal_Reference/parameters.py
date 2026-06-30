@@ -1,4 +1,5 @@
 import json
+import os
 import torch
 import numpy as np
 
@@ -360,7 +361,7 @@ def get_montage_data_from_dict(lead_dict, lead_type):
 
 #正常值的载入
 #若优化，用数据库
-normal_file_path = ".\\normal\\combined_result_0611.json"
+normal_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "normal", "combined_result_0625.json")
 with open(normal_file_path, 'r', encoding='utf-8') as f:
     normal_stat_dict = json.load(f)
 
