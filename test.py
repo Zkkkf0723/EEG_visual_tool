@@ -2642,8 +2642,12 @@ def main():
                             )
 
                         # 构建明细表格
+                        # 复用展开函数过滤虚拟组：仅显示用户当前勾选的导联/虚拟组
+                        target_leads = _expand_selected(selected_leads, set(pos_map.keys()))
                         df_rows = []
                         for lead in sorted(lv):
+                            if lead not in target_leads:
+                                continue
                             r = {"导联": lead}
                             for bk, bl in topo_bands:
                                 r[bl] = lv[lead].get(bk)
