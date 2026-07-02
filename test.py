@@ -2236,7 +2236,7 @@ def main():
                 if flt_lead_names and all(l in existing_spec for l in flt_lead_names):
                     sd = {lead: existing_spec[lead].copy() for lead in flt_lead_names}
                 else:
-                    sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob, st.session_state.get('art_fallback_mode', '保留原始数据'))
+                    sd, _ = _compute_psd_for_leads(montage_dict, _flt, ec, fs_val, np_len, art_th, prob, '保留原始数据')
                 grp_v = {
                     "🧠 全脑 (均值)": lead_opts,
                     "🧠 左脑 L (均值)": left_l,
