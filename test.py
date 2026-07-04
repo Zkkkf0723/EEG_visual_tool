@@ -1134,11 +1134,11 @@ def main():
                     keep_masks_dict[lead_name] = keep_mask
 
                     # ====== 检测并处理"所有epoch被过滤" ======
+                    # 注：为保障后续地形图绘制和Excel导出的数据完整性，此处始终回退到原始PSD数据
+                    # 无论用户选择何种伪迹回退模式，都不跳过该导联，确保其空间位置信息得以保留
                     if len(psds_without_art) == 0 and len(psds) > 0:
                         fallback_leads.append(lead_name)
-                        _fb_mode = st.session_state.get('art_fallback_mode', '保留原始数据')
-                        if _fb_mode == "剔除该导联":
-                            continue
+                        psds_without_art = psds
 
                     if len(psds_without_art) > 0:
                         leads_list.append(lead_name)
@@ -1151,7 +1151,13 @@ def main():
                 
                 if len(all_psds) == 0:
                     st.error("❌ 没有有效的PSD数据，请降低伪迹过滤严格度")
+                    st.session_state['_debug_analysis_complete'] = False
                     return
+                else:
+                    st.session_state['_debug_analysis_complete'] = True
+                    st.session_state['_debug_all_psds_count'] = len(all_psds)
+                    st.session_state['_debug_leads_list_count'] = len(leads_list)
+                    st.session_state['_debug_fallback_count'] = len(fallback_leads)
                 
                 # 7. 计算统计信息（与 PSD_calculate_full_EDF.py 保持一致）
                 status.update(label="📈 计算统计指标...")
@@ -1744,7 +1750,7 @@ def main():
             if fallback_leads and _fb_mode == '保留原始数据' and not _fb_dismissed:
                 st.error(f"⚠️ 伪迹过滤导致 {len(fallback_leads)} 个导联的全部epoch被剔除", icon="🚨")
                 st.markdown(
-                    f"以下导联的所有epoch均因伪迹过滤被剔除：\n\n"
+                    f"以下导联的所有epoch均因伪迹过滤被剔除：\n\n" +
                     f"\n".join(fallback_leads)
                 )
                 st.caption("请选择处理方式：")
@@ -1758,7 +1764,8 @@ def main():
                         st.session_state['art_fallback_mode'] = '剔除该导联'
                         st.session_state.pop('_fb_dismissed', None)
                         st.rerun()
-                st.stop()
+                st.caption("👇 下方已使用原始数据展示结果，请选择上述处理方式")
+                # 注意：不使用st.stop()，让地形图等tabs正常渲染
 
             # ====== 已剔除：显示提示信息 ======
             elif fallback_leads and _fb_mode == '剔除该导联':
@@ -2507,6 +2514,11 @@ def main():
             st.subheader("🗺️ 四频段脑电地形图")
             topo_mode = st.radio("显示", ["绝对功率","Z值"], horizontal=True, key="topo_mode")
 
+            # ====== DEBUG: 顶部诊断信息 ======
+            _dbg_analysis_ok = st.session_state.get('_debug_analysis_complete', False)
+            _dbg_psd_set = st.session_state.psd_results is not None
+            st.caption(f"🔍 DEBUG: 分析完成={_dbg_analysis_ok} | psd_results已设置={_dbg_psd_set} | all_psds数={st.session_state.get('_debug_all_psds_count', 'N/A')} | leads_list数={st.session_state.get('_debug_leads_list_count', 'N/A')} | 回退导联数={st.session_state.get('_debug_fallback_count', 'N/A')}")
+
             base_pos = get_ear_electrode_positions()
             if "双极" in lead_type:
                 pos_map = get_bipolar_electrode_positions()
@@ -2517,9 +2529,11 @@ def main():
 
             if not spec_dict_all:
                 st.warning("⚠️ 无有效PSD数据")
+                st.caption(f"🔍 DEBUG: spec_dict_all为空，len(spec_dict_all)={len(spec_dict_all) if spec_dict_all else 0}")
             else:
                 # 检测当前数据是否与所选导联类型匹配
                 matched = [l for l in pos_map if l in spec_dict_all]
+                st.caption(f"🔍 DEBUG: spec_dict_all导联数={len(spec_dict_all)} | pos_map导联数={len(pos_map)} | 匹配数={len(matched)}")
                 if len(matched) < 3:
                     # 反向推断实际数据类型
                     has_ear = any(k.endswith('-A1') or k.endswith('-A2') or k.endswith('-AV') for k in spec_dict_all)
@@ -2533,21 +2547,73 @@ def main():
                     z_mode = (topo_mode == "Z值")
                     unit = "Z值" if z_mode else "dB"
                     plot_cache = {}
+                    # 记录哪些导联使用了回退数据（用于后续提示）
+                    _fallback_used = set()
+                    
+                    # ====== DEBUG: 诊断地形图数据 ======
+                    _dbg_matched = len(matched)
+                    _dbg_spec_count = len(spec_dict_all)
+                    _dbg_pos_count = len(pos_map)
+                    _dbg_fallback_leads = st.session_state.psd_results.get('fallback_leads', [])
+                    with st.expander("🔍 诊断信息 (DEBUG)", expanded=True):
+                        st.caption(f"spec_dict_all 中的导联数: {_dbg_spec_count} | pos_map 导联数: {_dbg_pos_count} | 匹配数: {_dbg_matched} | {len(_dbg_fallback_leads)}个导联使用了回退数据")
+                        if _dbg_fallback_leads:
+                            st.caption(f"回退导联: {', '.join(sorted(_dbg_fallback_leads))}")
+                        _dbg_sample_lead = list(spec_dict_all.keys())[0] if spec_dict_all else 'N/A'
+                        st.caption(f"示例导联 '{_dbg_sample_lead}' 的 keys: {list(spec_dict_all[_dbg_sample_lead].keys())[:10]}...")
+                        for bk_debug, bl_debug in topo_bands:
+                            _dbg_valid = 0
+                            for lead_debug in pos_map:
+                                if lead_debug in spec_dict_all:
+                                    _dd = spec_dict_all[lead_debug].get(bk_debug)
+                                    if _dd is not None and len(np.atleast_1d(_dd)) > 0:
+                                        _dbg_valid += 1
+                            st.caption(f"频段 {bl_debug}: 有效导联 {_dbg_valid}/{_dbg_pos_count}")
                     for bk, bl in topo_bands:
                         pts, vals, names = [], [], []
                         for lead, (px, py) in pos_map.items():
-                            if lead not in spec_dict_all: continue
+                            if lead not in spec_dict_all:
+                                _fallback_used.add(lead)
+                                continue
                             d = spec_dict_all[lead].get(bk)
-                            if d is None or len(np.atleast_1d(d))==0: continue
+                            if d is None or len(np.atleast_1d(d))==0:
+                                _fallback_used.add(lead)
+                                continue
                             mv = float(np.mean(d))
                             if z_mode:
                                 rm = get_normal_ref(all_ref_data, selected_age_group, bk, lead, 'mean')
                                 rs = get_normal_ref(all_ref_data, selected_age_group, bk, lead, 'std')
                                 if rm is not None and rs is not None and rs > 0:
                                     mv = (mv - rm)/rs
-                                else: continue
+                                else:
+                                    _fallback_used.add(lead)
+                                    continue
                             pts.append([px, py]); vals.append(mv); names.append(lead)
+
+                        # ====== 空间插值补全缺失导联 ======
+                        # 对因伪迹过滤等原因在 spec_dict_all 中缺失的导联，
+                        # 使用已有有效导联的空间最近邻插值估算其数值，
+                        # 确保地形图绘制的完整空间数据矩阵
                         if len(vals) >= 3:
+                            pts_arr = np.array(pts)
+                            vals_arr = np.array(vals)
+                            valid_set = set(names)
+                            missing_items = []
+                            for lead_name, (px, py) in pos_map.items():
+                                if lead_name not in valid_set:
+                                    missing_items.append((lead_name, px, py))
+                            if missing_items:
+                                try:
+                                    nn_interp = si.NearestNDInterpolator(pts_arr, vals_arr)
+                                    for lead_name, px, py in missing_items:
+                                        est_val = float(nn_interp(px, py))
+                                        pts_arr = np.vstack([pts_arr, [px, py]])
+                                        vals_arr = np.append(vals_arr, est_val)
+                                        names.append(lead_name)
+                                    pts = pts_arr.tolist()
+                                    vals = vals_arr.tolist()
+                                except Exception:
+                                    pass  # 插值失败时回退到原始有效导联集
                             plot_cache[bk] = (np.array(pts), np.array(vals), names)
 
                     if not plot_cache:
